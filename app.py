@@ -34,6 +34,9 @@ from agent import parse_brief, run_brief
 from audit import run_audit
 from documents import UnsupportedFileType, extract_text
 from export import export_document
+from comparison import compare_reports
+from contracts import validate_review_decisions
+from review import build_findings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("brief.app")
@@ -53,6 +56,7 @@ class Session:
     created: float = field(default_factory=time.time)
     progress: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None
+    review: dict[str, Any] | None = None
 
 
 class SessionStore:
@@ -102,7 +106,9 @@ def _start_background(session_id: str, work) -> None:
 
     def run() -> None:
         try:
-            session.result = {"status": "done", "data": work(on_progress)}
+            report = work(on_progress)
+            report["findings"] = build_findings(report)
+            session.result = {"status": "done", "data": report}
         except Exception:
             log.exception("background run failed")
             session.result = {"status": "error", "message": "The analysis failed. Quote the job ID to support."}
@@ -253,6 +259,52 @@ def audit():
         instrument, brief, mode, progress_callback=on_progress,
     ))
     return jsonify({"session_id": session_id})
+
+
+@app.route("/review/<session_id>", methods=["POST"])
+def review_session(session_id: str):
+    session = sessions.get(session_id, g.identity)
+    if session is None:
+        return jsonify({"error": "Unknown session."}), 404
+    if not session.result or session.result.get("status") != "done":
+        return jsonify({"error": "The analysis is not complete."}), 409
+    report = session.result["data"]
+    allowed = {str(item.get("id")) for item in report.get("findings") or []}
+    try:
+        decisions = validate_review_decisions((request.get_json(silent=True) or {}).get("decisions"), allowed)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    review = {
+        "reviewer": g.identity,
+        "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "complete": len(decisions) == len(allowed) and bool(allowed),
+        "decisions": decisions,
+    }
+    session.review = review
+    report["human_review"] = review
+    return jsonify({"review": review, "data": report})
+
+
+@app.route("/compare", methods=["POST"])
+def compare():
+    data = request.get_json(silent=True) or {}
+    left, right = data.get("left"), data.get("right")
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return jsonify({"error": "Two report objects are required."}), 400
+    return jsonify({"comparison": compare_reports(left, right)})
+
+
+@app.route("/policy")
+def policy_status():
+    policy = config.ACTIVE_POLICY
+    return jsonify({
+        "name": policy.name,
+        "max_classification": policy.max_classification,
+        "web_grounding": policy.web_grounding,
+        "raw_payload_logging": policy.raw_payload_logging,
+        "allowed_uploads": policy.allowed_uploads,
+        "description": policy.description,
+    })
 
 
 @app.route("/export", methods=["POST"])
