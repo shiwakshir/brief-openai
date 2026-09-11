@@ -29,7 +29,7 @@ def _int(name: str, default: int, minimum: int = 1) -> int:
     return value
 
 
-ENVIRONMENT = os.getenv("BRIEF_ENVIRONMENT", "development").strip().lower()
+ENVIRONMENT = os.getenv("BRIEF_ENVIRONMENT", "development").strip().lower()\nPROMPT_VERSION = os.getenv("BRIEF_PROMPT_VERSION", "2026-09-11")
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
