@@ -18,6 +18,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import config
 from agent import UX_MODE_NOTE, parse_brief
 from llm import call_json, log_step, start_run_log
 
@@ -232,7 +233,7 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
 
     result = {
         "status": "complete",
-        "prompt_version": __import__("config").PROMPT_VERSION,
+        "prompt_version": config.PROMPT_VERSION,
         "instrument_type": parsed_instrument.get("instrument_type", ""),
         "sections": parsed_instrument.get("sections", []),
         "items": merged,
