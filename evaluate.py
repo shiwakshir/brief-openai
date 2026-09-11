@@ -1,145 +1,153 @@
-"""
-Evaluate BRIEF against a test set of briefs with planted biases.
-
-Usage:
-    python evaluate.py                # run all briefs in tests/briefs.json
-    python evaluate.py bank-budgeting # run one brief by id
-    python evaluate.py --dry          # list the briefs and expectations, no API calls
-    python evaluate.py --quick        # one probe model, no web grounding (cheap smoke test)
-
-For each brief the script:
-  1. runs the full pipeline,
-  2. flattens the report to text,
-  3. checks each expected flag group (a group passes if ANY of its phrases appears),
-  4. checks that each expected high-contamination hypothesis scored over 50,
-  5. writes a scorecard to tests/results/<timestamp>.json and prints a summary.
-
-A change to the tool is an improvement only if this score goes up.
-"""
+"""Run BRIEF against labelled synthetic cases and enforce quality thresholds."""
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
-import sys
 import time
 from typing import Any
 
-TESTS_PATH = os.path.join("tests", "briefs.json")
-RESULTS_DIR = os.path.join("tests", "results")
+CASES_PATH = os.path.join("evals", "labelled_cases.json")
+RESULTS_DIR = os.path.join("evals", "results")
 
 
-def flatten(obj: Any) -> str:
-    """Turn the nested result dict into one lowercase string for phrase checks."""
-    parts = []
+def explicit_findings(result: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract analysis outputs only; never search parsed brief or client hypotheses."""
+    findings: list[dict[str, str]] = []
 
-    def walk(x):
-        if isinstance(x, dict):
-            for k, v in x.items():
-                if k in ("query_data",):
-                    continue  # the raw AI answers are not the tool's findings
-                walk(v)
-        elif isinstance(x, list):
-            for v in x:
-                walk(v)
-        elif x is not None:
-            parts.append(str(x))
+    def add(category: str, value: Any) -> None:
+        if isinstance(value, dict):
+            text = " ".join(str(v) for k, v in value.items() if k not in {"hypothesis", "hypothesis_id"})
+        elif isinstance(value, list):
+            text = " ".join(str(v) for v in value)
+        else:
+            text = str(value or "")
+        if text.strip():
+            findings.append({"category": category, "text": text.lower()})
 
-    walk(obj)
-    return "\n".join(parts).lower()
-
-
-def check(brief_case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    text = flatten(result)
-    flag_results = []
-    for group in brief_case.get("expect_any", []):
-        hit = next((p for p in group if p.lower() in text), None)
-        flag_results.append({"group": group, "hit": hit, "passed": hit is not None})
-
-    contamination_results = []
-    assessed = result.get("contamination", {}).get("hypotheses_assessed", [])
-    for phrase in brief_case.get("expect_high_contamination", []):
-        match = next((h for h in assessed if phrase.lower() in str(h.get("hypothesis", "")).lower()), None)
-        score = match.get("contamination_score") if match else None
-        contamination_results.append({
-            "phrase": phrase,
-            "found_hypothesis": bool(match),
-            "score": score,
-            "passed": bool(match) and isinstance(score, int) and score > 50,
+    confidence = result.get("confidence") or {}
+    add("key_finding", confidence.get("key_finding"))
+    for risk in confidence.get("top_three_risks") or []:
+        add("risk_to_fieldwork", risk)
+    gaps = result.get("gaps") or {}
+    for gap in gaps.get("sample_cannot_test") or []:
+        add("sample_fit", gap.get("why") if isinstance(gap, dict) else gap)
+    for item in (result.get("contamination") or {}).get("hypotheses_assessed") or []:
+        add("convergence_analysis", {
+            "explanation": item.get("explanation"),
+            "recommendation": item.get("recommendation"),
+            "responses_matching": item.get("responses_matching"),
         })
-
-    errors = [k for k, v in result.items() if isinstance(v, dict) and v.get("_error")]
-    return {
-        "id": brief_case["id"],
-        "flags": flag_results,
-        "contamination": contamination_results,
-        "step_errors": errors,
-        "confidence_score": result.get("confidence", {}).get("confidence_score"),
-        "grounded": result.get("archaeology", {}).get("grounded", False),
-        "generic_rejected": len(result.get("methodology", {}).get("rejected_as_generic", [])),
-    }
+    archaeology = result.get("archaeology") or {}
+    add("source_landscape", archaeology.get("dominant_narrative_origin"))
+    add("source_landscape", archaeology.get("implication_for_research"))
+    methodology = result.get("methodology") or {}
+    add("methodology", methodology.get("recommended_approach"))
+    add("methodology", methodology.get("sample_design_notes"))
+    return findings
 
 
-def main() -> None:
-    with open(TESTS_PATH, encoding="utf-8") as f:
-        cases = json.load(f)
+def _matches(expectation: dict[str, Any], findings: list[dict[str, str]]) -> str | None:
+    phrases = [str(p).lower() for p in expectation.get("phrases", [])]
+    category = str(expectation.get("category") or "")
+    for finding in findings:
+        if finding["category"] == category:
+            if "*" in phrases:
+                return "*"
+            hit = next((phrase for phrase in phrases if phrase in finding["text"]), None)
+            if hit:
+                return hit
+    return None
 
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    dry = "--dry" in sys.argv
-    quick = "--quick" in sys.argv
-    if args:
-        cases = [c for c in cases if c["id"] in args]
 
-    if dry:
-        for c in cases:
-            print(f"{c['id']}: {len(c['expect_any'])} flag groups, "
-                  f"{len(c.get('expect_high_contamination', []))} contamination checks")
-        return
+def check(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    findings = explicit_findings(result)
+    expected = []
+    forbidden = []
+    for label in case.get("expected_findings", []):
+        hit = _matches(label, findings)
+        expected.append({**label, "hit": hit, "passed": hit is not None})
+    for label in case.get("forbidden_findings", []):
+        hit = _matches(label, findings)
+        forbidden.append({**label, "hit": hit, "passed": hit is None})
+    assessed = (result.get("contamination") or {}).get("hypotheses_assessed") or []
+    contamination = []
+    for label in case.get("expected_high_convergence", []):
+        match = next((item for item in assessed if label.lower() in str(item.get("hypothesis", "")).lower()), None)
+        score = match.get("contamination_score") if match else None
+        contamination.append({"label": label, "score": score,
+                              "passed": isinstance(score, int) and not isinstance(score, bool) and score > 50})
+    return {"id": case["id"], "expected": expected, "forbidden": forbidden,
+            "contamination": contamination, "step_errors": (result.get("run_health") or {}).get("step_errors", [])}
 
-    from agent import run_brief  # imported here so --dry needs no API key
 
+def metrics(cards: list[dict[str, Any]]) -> dict[str, float | int]:
+    tp = sum(item["passed"] for card in cards for item in card["expected"])
+    fn = sum(not item["passed"] for card in cards for item in card["expected"])
+    fp = sum(not item["passed"] for card in cards for item in card["forbidden"])
+    cont_pass = sum(item["passed"] for card in cards for item in card["contamination"])
+    cont_total = sum(len(card["contamination"]) for card in cards)
+    precision = tp / (tp + fp) if tp + fp else 1.0
+    recall = tp / (tp + fn) if tp + fn else 1.0
+    return {"true_positives": tp, "false_positives": fp, "false_negatives": fn,
+            "precision": precision, "recall": recall,
+            "convergence_passed": cont_pass, "convergence_total": cont_total,
+            "step_errors": sum(len(card["step_errors"]) for card in cards)}
+
+
+def thresholds_pass(summary: dict[str, Any], min_precision: float, min_recall: float) -> bool:
+    return (summary["precision"] >= min_precision and summary["recall"] >= min_recall
+            and summary["convergence_passed"] == summary["convergence_total"]
+            and summary["step_errors"] == 0)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ids", nargs="*")
+    parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--dry", action="store_true")
+    parser.add_argument("--validate-dataset", action="store_true")
+    parser.add_argument("--min-precision", type=float, default=.80)
+    parser.add_argument("--min-recall", type=float, default=.80)
+    args = parser.parse_args()
+    with open(CASES_PATH, encoding="utf-8") as handle:
+        cases = json.load(handle)
+    if not isinstance(cases, list) or not cases:
+        raise SystemExit("Evaluation dataset must contain cases")
+    if not any(case.get("expected_findings") for case in cases):
+        raise SystemExit("Evaluation dataset needs positive labelled expectations")
+    if not any(case.get("forbidden_findings") for case in cases):
+        raise SystemExit("Evaluation dataset needs clean/negative labelled expectations")
+    for case in cases:
+        if not case.get("id") or not case.get("brief"):
+            raise SystemExit("Every evaluation case needs an id and brief")
+        for label in case.get("expected_findings", []) + case.get("forbidden_findings", []):
+            if not label.get("category") or not label.get("phrases"):
+                raise SystemExit(f"Case {case['id']} has an incomplete expectation")
+    if args.ids:
+        cases = [case for case in cases if case["id"] in args.ids]
+    if not cases:
+        raise SystemExit("No matching evaluation cases")
+    if args.dry or args.validate_dataset:
+        print(f"Validated {len(cases)} labelled cases, including {sum(bool(c.get('forbidden_findings')) for c in cases)} clean/negative cases.")
+        return 0
+
+    from agent import run_brief
+    cards = []
+    for case in cases:
+        result = run_brief(case["brief"], mode=case.get("mode", "market"), quick=args.quick)
+        cards.append(check(case, result))
+    summary = metrics(cards)
+    summary["cards"] = cards
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    scorecards = []
-    for c in cases:
-        print(f"\n=== {c['id']} ===")
-        start = time.time()
-        result = run_brief(c["brief"], progress_callback=lambda n, i, t: print(f"  {i}/{t} {n}"),
-                           mode=c.get("mode", "market"), quick=quick)
-        card = check(c, result)
-        card["seconds"] = round(time.time() - start)
-        scorecards.append(card)
-        for fr in card["flags"]:
-            mark = "PASS" if fr["passed"] else "MISS"
-            print(f"  [{mark}] {fr['group'][0]} ... -> {fr['hit']}")
-        for cr in card["contamination"]:
-            mark = "PASS" if cr["passed"] else "MISS"
-            print(f"  [{mark}] contamination '{cr['phrase']}' scored {cr['score']}")
-        if card["step_errors"]:
-            print(f"  step errors: {card['step_errors']}")
-
-    total_flags = sum(len(s["flags"]) for s in scorecards)
-    passed_flags = sum(1 for s in scorecards for f in s["flags"] if f["passed"])
-    total_cont = sum(len(s["contamination"]) for s in scorecards)
-    passed_cont = sum(1 for s in scorecards for f in s["contamination"] if f["passed"])
-
-    summary = {
-        "run_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "quick": quick,
-        "briefs": len(scorecards),
-        "flags_passed": f"{passed_flags}/{total_flags}",
-        "contamination_passed": f"{passed_cont}/{total_cont}",
-        "step_errors": sum(len(s["step_errors"]) for s in scorecards),
-        "cards": scorecards,
-    }
-    out_path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d-%H%M%S") + ".json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-
-    print(f"\nFlags caught: {summary['flags_passed']}   "
-          f"High-contamination hypotheses caught: {summary['contamination_passed']}   "
-          f"Step errors: {summary['step_errors']}")
-    print(f"Scorecard written to {out_path}")
+    path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d-%H%M%S") + ".json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, ensure_ascii=False)
+    passed = thresholds_pass(summary, args.min_precision, args.min_recall)
+    print(f"Precision {summary['precision']:.1%}; recall {summary['recall']:.1%}; threshold {'PASS' if passed else 'FAIL'}")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

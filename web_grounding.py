@@ -181,9 +181,17 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
         "Find published evidence for and against this hypothesis in each country."
     )
     raw = retrieve(query, instructions=instructions)
+    retrieved_urls = {
+        _clean_url(str(item.get("url", "")))
+        for item in raw.get("citations", [])
+        if isinstance(item, dict) and item.get("url")
+    }
     result = {
         "grounded": False, "hypothesis": hypothesis, "verdict": "insufficient evidence",
         "summary": "", "countries": [], "citations": raw.get("citations", []),
+        "retrieval_status": "sources_retrieved" if retrieved_urls else "no_sources_retrieved",
+        "verification_status": "unverified",
+        "human_verified": False,
     }
     if not raw.get("answer"):
         return result
@@ -202,12 +210,15 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
             for it in items or []:
                 if not isinstance(it, dict) or not it.get("finding"):
                     continue
+                url = _clean_url(str(it.get("url", "")))
                 out.append({
                     "finding": _clean_prose(str(it.get("finding", "")))[:700],
                     "source": str(it.get("source", ""))[:160],
-                    "url": _clean_url(str(it.get("url", ""))),
+                    "url": url,
                     "year": str(it.get("year", ""))[:4],
-                    "review_status": "unverified",
+                    "source_retrieved": bool(url and url in retrieved_urls),
+                    "verification_status": "unverified",
+                    "human_verified": False,
                 })
             return out[:4]
         countries.append({
@@ -221,6 +232,17 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
         "summary": _clean_prose(str(data.get("summary", "")))[:1200],
         "countries": countries,
     })
-    result["grounded"] = bool(countries and any(c["for"] or c["against"] for c in countries))
+    findings = [
+        finding
+        for country in countries
+        for finding in (country["for"] + country["against"])
+    ]
+    result["grounded"] = bool(findings) and all(
+        finding.get("source_retrieved") is True for finding in findings
+    )
+    result["retrieved_findings"] = sum(
+        1 for finding in findings if finding.get("source_retrieved") is True
+    )
+    result["unretrieved_findings"] = len(findings) - result["retrieved_findings"]
     log.info("hypothesis evidence: %s countries, grounded=%s", len(countries), result["grounded"])
     return result

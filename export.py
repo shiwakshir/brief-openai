@@ -218,7 +218,9 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
         el.append(("p", f"**Overall: {_s(cont['overall_contamination_level'])}.** {_s(cont.get('overall_explanation'))}"))
     assessed = cont.get("hypotheses_assessed") or []
     if assessed:
-        rows = [[_s(h.get("hypothesis"), 240), str(h.get("contamination_score", "")), _s(h.get("score_label")),
+        rows = [[_s(h.get("hypothesis"), 240),
+                 str(h.get("contamination_score")) if h.get("contamination_score") is not None else "Insufficient data",
+                 _s(h.get("score_label")),
                  _s(h.get("responses_matching"), 200)] for h in assessed]
         el.append(("table", ["Hypothesis", "Score", "Band", "Measured across the AI answers"], rows, [0.40, 0.09, 0.12, 0.39], 2))
         el.append(("small", "Score: a classifier marks each AI answer as presenting the idea as the main cause (1), as one factor "

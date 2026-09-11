@@ -1,0 +1,21 @@
+[
+  {
+    "id": "sample-excludes-older-users",
+    "brief": "A bank believes customers over 65 avoid its app because they lack confidence. Interview current app users aged 25 to 40 in London.",
+    "expected_findings": [
+      {"category": "sample_fit", "phrases": ["excludes", "over 65", "cannot test"]}
+    ],
+    "expected_high_convergence": [],
+    "forbidden_findings": []
+  },
+  {
+    "id": "clean-exploratory-brief",
+    "brief": "Explore how adults choose a current account. Recruit a varied sample and investigate competing explanations without assuming a primary cause.",
+    "expected_findings": [],
+    "expected_high_convergence": [],
+    "forbidden_findings": [
+      {"category": "sample_fit", "phrases": ["*"]},
+      {"category": "risk_to_fieldwork", "phrases": ["*"]}
+    ]
+  }
+]

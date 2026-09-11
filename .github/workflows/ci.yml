@@ -18,6 +18,7 @@ jobs:
       - run: python -m compileall -q .
       - run: node --check static/js/brief.js
       - run: pytest -q
+      - run: python evaluate.py --validate-dataset
       - run: pip-audit --requirement requirements.txt
       - run: pip-audit --requirement requirements.txt --format cyclonedx-json --output sbom.cdx.json
       - uses: actions/upload-artifact@v4

@@ -9,6 +9,7 @@ which is how any score in the report can be traced back to evidence.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -43,6 +44,30 @@ devices, accessibility and mental models, not brand or market share."""
 def _lines(items) -> str:
     """Join an iterable of strings with newlines, for prompt building."""
     return "\n".join(items)
+
+
+def _hypothesis_records(parsed: Parsed) -> list[dict[str, str]]:
+    """Return unique hypotheses with deterministic IDs that survive model reordering."""
+    records: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in parsed.get("client_hypotheses", []) or []:
+        text = str((value.get("hypothesis") or value.get("text") or "") if isinstance(value, dict) else value).strip()
+        canonical = " ".join(text.casefold().split())
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        records.append({
+            "hypothesis_id": f"hyp-{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:12]}",
+            "hypothesis": text,
+        })
+    return records[:5]
+
+
+def _attach_hypothesis_ids(parsed: Parsed) -> Parsed:
+    records = _hypothesis_records(parsed)
+    parsed["client_hypotheses"] = [item["hypothesis"] for item in records]
+    parsed["hypothesis_records"] = records
+    return parsed
 
 
 def mode_note(parsed: Parsed | None) -> str:
@@ -166,13 +191,20 @@ def step_query(prompts, parsed, probe_models=None):
 def step_convergence(parsed, query_data):
     """
     Measure, rather than ask, how often the AI answers contain each client
-    hypothesis. A judge model classifies every answer as 'states', 'hedges'
-    or 'absent' for each hypothesis. Counts are then computed in code.
+    hypothesis. A judge model classifies every answer as main, mentions, disputes
+    or absent for each hypothesis. Counts are computed only for complete responses.
     """
-    hypotheses = [h for h in parsed.get("client_hypotheses", []) if str(h).strip()][:5]
+    hypothesis_records = _hypothesis_records(parsed)
     answers = query_data.get("base_responses", []) + query_data.get("persona_responses", [])
-    if not hypotheses or not answers:
+    if not hypothesis_records:
         return {"hypotheses": [], "n_answers": len(answers), "models": query_data.get("models", [])}
+    if not answers:
+        return {"hypotheses": [{
+            **record, "n_answers": 0, "classification_status": "insufficient_data",
+            "classification_errors": ["no probe answers were available"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in hypothesis_records], "n_answers": 0, "models": query_data.get("models", [])}
 
     system = """You are a strict content classifier.
 For each numbered AI answer, decide how it treats the given hypothesis:
@@ -188,23 +220,57 @@ Include every answer number exactly once."""
     for i, r in enumerate(answers, 1):
         numbered += f"\n[Answer {i}] ({r.get('model','')})\n{(r.get('response') or '')[:1800]}\n"
 
-    def judge(h):
-        user = f"Hypothesis: {h}\n\nAI answers:{numbered}"
+    def judge(record):
+        hypothesis_id = record["hypothesis_id"]
+        h = record["hypothesis"]
+        user = f"Hypothesis ID: {hypothesis_id}\nHypothesis: {h}\n\nAI answers:{numbered}"
         result = call_json("03b_convergence_judge", system, user, required_keys=("verdicts",), temperature=0)
         verdicts = {}
-        for v in result.get("verdicts", []):
-            try:
-                verdicts[int(v.get("answer"))] = v
-            except Exception:
+        errors = []
+        rows = result.get("verdicts", [])
+        if not isinstance(rows, list):
+            rows = []
+            errors.append("verdicts was not a list")
+        for v in rows:
+            if not isinstance(v, dict):
+                errors.append("classification row was not an object")
                 continue
+            try:
+                answer_number = int(v.get("answer"))
+            except (TypeError, ValueError):
+                errors.append("classification had an invalid answer number")
+                continue
+            verdict = str(v.get("verdict", "")).lower()
+            if answer_number < 1 or answer_number > len(answers):
+                errors.append(f"classification referenced answer {answer_number} out of range")
+            elif answer_number in verdicts:
+                errors.append(f"answer {answer_number} was classified more than once")
+            elif verdict not in {"main", "mentions", "disputes", "absent"}:
+                errors.append(f"answer {answer_number} had invalid verdict {verdict!r}")
+            else:
+                verdicts[answer_number] = v
+        missing = sorted(set(range(1, len(answers) + 1)) - set(verdicts))
+        if missing:
+            errors.append(f"missing classifications for answers {missing}")
+        if len(rows) != len(answers):
+            errors.append(f"expected {len(answers)} classification rows, received {len(rows)}")
+        if errors:
+            return {
+                "hypothesis_id": hypothesis_id,
+                "hypothesis": h,
+                "n_answers": len(answers),
+                "classification_status": "insufficient_data",
+                "classification_errors": errors,
+                "main": None, "mentions": None, "disputes": None, "absent": None,
+                "presence_pct": None, "measured_score": None,
+                "per_model": {}, "quotes": [],
+            }
         per_model = {}
         quotes = []
         counts = {"main": 0, "mentions": 0, "disputes": 0, "absent": 0}
         for i, r in enumerate(answers, 1):
-            v = verdicts.get(i, {})
-            verdict = str(v.get("verdict", "absent")).lower()
-            if verdict not in counts:
-                verdict = "absent"
+            v = verdicts[i]
+            verdict = str(v["verdict"]).lower()
             m = r.get("model", "unknown")
             per_model.setdefault(m, {"main": 0, "mentions": 0, "disputes": 0, "absent": 0, "n": 0})
             per_model[m]["n"] += 1
@@ -220,7 +286,10 @@ Include every answer number exactly once."""
         score = int(round(100 * max(0.0, min(1.0, raw_score))))
         presence = int(round(100 * (counts["main"] + counts["mentions"] + counts["disputes"]) / n)) if n else 0
         return {
+            "hypothesis_id": hypothesis_id,
             "hypothesis": h,
+            "classification_status": "valid",
+            "classification_errors": [],
             "n_answers": n,
             "main": counts["main"],
             "mentions": counts["mentions"],
@@ -233,7 +302,7 @@ Include every answer number exactly once."""
         }
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(judge, hypotheses))
+        results = list(pool.map(judge, hypothesis_records))
     out = {"hypotheses": results, "n_answers": len(answers), "models": query_data.get("models", [])}
     log_step("03b_convergence", out)
     return out
@@ -389,6 +458,7 @@ Scoring rubric. Use it and cite it:
 A measured count is supplied for each hypothesis: how many of the AI answers state
 it, hedge it, or omit it, and a score computed from that count. Use the measured score
 as the contamination_score. Your job is to explain it, quote the answers, and advise.
+If a hypothesis is marked INSUFFICIENT DATA, do not invent or infer a score.
 Assess the hypotheses in the order given. overall_contamination_level is the band of the
 HIGHEST measured score (0-25 Low, 26-50 Medium, 51-75 High, 76-100 Critical), and
 overall_explanation must not name a different level.
@@ -397,6 +467,7 @@ Return ONLY valid JSON with this exact structure:
   "hypotheses_assessed": [
     {
       "hypothesis": "the client's stated hypothesis",
+      "hypothesis_id": "copy the supplied stable hypothesis_id exactly",
       "contamination_score": 0,
       "score_label": "Low / Medium / High / Critical",
       "explanation": "why this hypothesis does or doesn't match AI consensus, naming the rubric band",
@@ -411,9 +482,11 @@ Return ONLY valid JSON with this exact structure:
   "most_dangerous_assumption": "the single hypothesis most likely to corrupt research findings if left unchallenged"
 }"""
 
-    hypotheses = parsed.get('client_hypotheses', [])
-    if not hypotheses:
-        hypotheses = ["No explicit hypotheses stated - inferred from brief language"]
+    hypothesis_records = _hypothesis_records(parsed)
+    if not hypothesis_records:
+        hypothesis_records = _hypothesis_records({
+            "client_hypotheses": ["No explicit hypotheses stated - inferred from brief language"]
+        })
 
     evidence = ""
     if query_data:
@@ -425,15 +498,18 @@ Return ONLY valid JSON with this exact structure:
     measured_block = ""
     conv_list = (convergence or {}).get("hypotheses", [])
     for c in conv_list:
+        if c.get("classification_status") != "valid":
+            measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: INSUFFICIENT DATA; classification contract failed"
+            continue
         measured_block += (
-            f"\n- {c['hypothesis']}: presented as main cause in {c['main']}/{c['n_answers']} answers, "
+            f"\n- {c['hypothesis_id']} {c['hypothesis']}: presented as main cause in {c['main']}/{c['n_answers']} answers, "
             f"mentioned as one factor in {c['mentions']}/{c['n_answers']}, disputed in {c['disputes']}/{c['n_answers']}, "
             f"absent in {c['absent']}/{c['n_answers']}; measured score {c['measured_score']}/100; "
             f"by model: {json.dumps(c['per_model'])}"
         )
 
     user = f"""
-Client hypotheses (assess in this order): {json.dumps(hypotheses)}
+Client hypotheses (return every hypothesis_id exactly once): {json.dumps(hypothesis_records)}
 Research category: {parsed.get('category', '')}
 Measured convergence across {len(conv_list) and conv_list[0]['n_answers']} AI answers from models {json.dumps((convergence or {}).get('models', []))}:{measured_block or ' none measured'}
 AI dominant assumptions for this category: {json.dumps(clusters.get('dominant_assumptions', []))}
@@ -452,13 +528,39 @@ Score each hypothesis for AI contamination using the rubric (0=completely origin
         if score <= 75: return "High"
         return "Critical"
 
-    # Measured scores override the model's own numbers, matched by order
-    assessed = result.get("hypotheses_assessed", [])
-    for i, h in enumerate(assessed):
-        measured = conv_list[i] if i < len(conv_list) else None
-        if measured:
+    # Join explanations to measurements only by stable ID. Never attach by list position.
+    raw_assessed = result.get("hypotheses_assessed", [])
+    expected_ids = {item["hypothesis_id"] for item in hypothesis_records}
+    explanation_by_id = {}
+    explanation_errors = []
+    for item in raw_assessed if isinstance(raw_assessed, list) else []:
+        hypothesis_id = str(item.get("hypothesis_id") or "") if isinstance(item, dict) else ""
+        if hypothesis_id not in expected_ids:
+            explanation_errors.append(f"unknown hypothesis_id {hypothesis_id!r}")
+        elif hypothesis_id in explanation_by_id:
+            explanation_errors.append(f"duplicate hypothesis_id {hypothesis_id}")
+        else:
+            explanation_by_id[hypothesis_id] = item
+    convergence_by_id = {item.get("hypothesis_id"): item for item in conv_list}
+    assessed = []
+    for record in hypothesis_records:
+        hypothesis_id = record["hypothesis_id"]
+        measured = convergence_by_id.get(hypothesis_id)
+        h = explanation_by_id.get(hypothesis_id, {
+            "hypothesis_id": hypothesis_id,
+            "hypothesis": record["hypothesis"],
+            "explanation": "Explanation unavailable; human review is required.",
+            "evidence_quotes": [],
+            "recommendation": "Do not use this indicator until the missing analysis is rerun.",
+        })
+        if hypothesis_id not in explanation_by_id:
+            explanation_errors.append(f"missing explanation for {hypothesis_id}")
+        h["hypothesis_id"] = hypothesis_id
+        h["hypothesis"] = record["hypothesis"]
+        if measured and measured.get("classification_status") == "valid":
             h["contamination_score"] = measured["measured_score"]
             h["measured"] = True
+            h["classification_status"] = "valid"
             h["responses_matching"] = (
                 f"Main cause in {measured['main']} of {measured['n_answers']} answers, "
                 f"one factor in {measured['mentions']}, disputed in {measured['disputes']}, "
@@ -469,15 +571,17 @@ Score each hypothesis for AI contamination using the rubric (0=completely origin
             if not h.get("evidence_quotes") and measured.get("quotes"):
                 h["evidence_quotes"] = [q["quote"] for q in measured["quotes"]]
         else:
-            try:
-                h["contamination_score"] = int(h.get("contamination_score", 50))
-            except Exception:
-                h["contamination_score"] = 50
+            h["contamination_score"] = None
             h["measured"] = False
+            h["classification_status"] = "insufficient_data"
+            h["responses_matching"] = "Insufficient data: not every answer received exactly one valid classification."
         h["evidence_quotes"] = [str(q).strip().strip('"').strip("\u201c\u201d") for q in h.get("evidence_quotes", [])]
-        h["score_label"] = band(h["contamination_score"])
-    if assessed:
-        result["overall_contamination_level"] = band(max(h["contamination_score"] for h in assessed))
+        h["score_label"] = band(h["contamination_score"]) if h["contamination_score"] is not None else "Insufficient data"
+        assessed.append(h)
+    valid_scores = [h["contamination_score"] for h in assessed if h["contamination_score"] is not None]
+    result["hypotheses_assessed"] = assessed
+    result["explanation_contract_errors"] = explanation_errors
+    result["overall_contamination_level"] = band(max(valid_scores)) if valid_scores else "Insufficient data"
     return result
 
 
@@ -930,6 +1034,7 @@ def run_brief(
         log_step("01_parse", {"result": parsed, "source": "user-reviewed"})
     else:
         parsed = parse_brief(brief, mode)
+    parsed = _attach_hypothesis_ids(parsed)
 
     progress("Working out how people actually ask about this", 2)
     prompts = _safe_step(step_generate, [], parsed)
@@ -1012,13 +1117,20 @@ def run_brief(
                       ("confidence", confidence), ("deliverables", deliverables)]:
         if isinstance(obj, dict) and obj.get("_error"):
             step_errors.append({"step": name, "error": str(obj["_error"])[:300]})
+    classification_failures = sum(
+        1 for item in convergence.get("hypotheses", [])
+        if item.get("classification_status") != "valid"
+    )
+    explanation_contract_errors = contamination.get("explanation_contract_errors", [])
     run_health = {
-        "status": "degraded" if step_errors else "complete",
+        "status": "degraded" if step_errors or classification_failures or explanation_contract_errors else "complete",
         "prompt_version": config.PROMPT_VERSION,
         "quick_mode": bool(quick),
         "probe_models": probe_models,
         "answers_collected": len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", [])),
         "grounded": bool(archaeology.get("grounded")),
+        "classification_failures": classification_failures,
+        "explanation_contract_errors": explanation_contract_errors,
         "step_errors": step_errors,
         "run_log_dir": current_run_dir(),
     }

@@ -21,11 +21,14 @@ def brief_assurance(
         limitations.append("Fewer than ten probe answers were available.")
     if not run_health.get("grounded"):
         limitations.append("Published evidence was not retrieved; source-landscape claims are model-only.")
+    if int(run_health.get("classification_failures") or 0):
+        limitations.append("One or more model-convergence indicators have insufficient classification data.")
 
     assurance = "limited" if limitations else "moderate"
     source_count = len(archaeology.get("sources") or [])
     hypothesis_sources = sum(
-        len(country.get("for") or []) + len(country.get("against") or [])
+        sum(1 for finding in (country.get("for") or []) + (country.get("against") or [])
+            if finding.get("source_retrieved") is True)
         for item in archaeology.get("hypothesis_evidence") or []
         for country in item.get("countries") or []
         if isinstance(country, dict)
@@ -43,6 +46,7 @@ def brief_assurance(
             "probe_models": list(run_health.get("probe_models") or []),
             "published_sources": source_count + hypothesis_sources,
             "web_grounded": bool(run_health.get("grounded")),
+            "classification_failures": int(run_health.get("classification_failures") or 0),
             "prompt_version": run_health.get("prompt_version"),
         },
         "limitations": limitations or [

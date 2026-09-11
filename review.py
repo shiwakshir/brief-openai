@@ -16,11 +16,11 @@ def build_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
         })
     for index, item in enumerate((report.get("contamination") or {}).get("hypotheses_assessed") or [], 1):
         findings.append({
-            "id": f"hypothesis-{index}",
+            "id": str(item.get("hypothesis_id") or f"hypothesis-{index}"),
             "category": "model_convergence",
             "statement": str(item.get("hypothesis") or ""),
-            "indicator": item.get("contamination_score"),
-            "basis": "computed_from_model_outputs",
+            "indicator": item.get("contamination_score") if item.get("contamination_score") is not None else "Insufficient data",
+            "basis": "computed_from_model_outputs" if item.get("contamination_score") is not None else "classification_incomplete",
             "required_action": "Decide whether this convergence is relevant to the research design.",
         })
     for index, item in enumerate((report.get("gaps") or {}).get("sample_cannot_test") or [], 1):

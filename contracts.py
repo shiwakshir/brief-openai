@@ -19,6 +19,22 @@ def validate_report(result: dict[str, Any]) -> list[str]:
         errors.append("assurance.assurance_level must be limited or moderate")
     if assurance.get("human_review_required") is not True:
         errors.append("assurance.human_review_required must be true")
+    records = (result.get("parsed") or {}).get("hypothesis_records") or []
+    if records:
+        expected_ids = [str(item.get("hypothesis_id") or "") for item in records]
+        assessed = (result.get("contamination") or {}).get("hypotheses_assessed") or []
+        assessed_ids = [str(item.get("hypothesis_id") or "") for item in assessed]
+        if len(expected_ids) != len(set(expected_ids)) or not all(expected_ids):
+            errors.append("parsed hypothesis IDs must be present and unique")
+        if set(assessed_ids) != set(expected_ids) or len(assessed_ids) != len(expected_ids):
+            errors.append("contamination hypotheses must contain every stable hypothesis ID exactly once")
+        for item in assessed:
+            score = item.get("contamination_score")
+            status = item.get("classification_status")
+            if status == "valid" and (not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 100):
+                errors.append("valid classifications require an integer contamination score from 0 to 100")
+            if status != "valid" and score is not None:
+                errors.append("incomplete classifications must not expose a contamination score")
     return errors
 
 
