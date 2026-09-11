@@ -60,7 +60,7 @@ def _hypothesis_records(parsed: Parsed) -> list[dict[str, str]]:
             "hypothesis_id": f"hyp-{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:12]}",
             "hypothesis": text,
         })
-    return records[:5]
+    return records
 
 
 def _attach_hypothesis_ids(parsed: Parsed) -> Parsed:
@@ -195,16 +195,26 @@ def step_convergence(parsed, query_data):
     or absent for each hypothesis. Counts are computed only for complete responses.
     """
     hypothesis_records = _hypothesis_records(parsed)
+    measured_records = hypothesis_records[:5]
+    unassessed_records = hypothesis_records[5:]
     answers = query_data.get("base_responses", []) + query_data.get("persona_responses", [])
     if not hypothesis_records:
         return {"hypotheses": [], "n_answers": len(answers), "models": query_data.get("models", [])}
     if not answers:
-        return {"hypotheses": [{
+        insufficient = [{
             **record, "n_answers": 0, "classification_status": "insufficient_data",
             "classification_errors": ["no probe answers were available"],
             "main": None, "mentions": None, "disputes": None, "absent": None,
             "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
-        } for record in hypothesis_records], "n_answers": 0, "models": query_data.get("models", [])}
+        } for record in measured_records]
+        unassessed = [{
+            **record, "n_answers": 0, "classification_status": "unassessed",
+            "classification_errors": ["outside the five-hypothesis measurement limit"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in unassessed_records]
+        return {"hypotheses": insufficient + unassessed, "n_answers": 0,
+                "models": query_data.get("models", []), "measurement_limit": 5}
 
     system = """You are a strict content classifier.
 For each numbered AI answer, decide how it treats the given hypothesis:
@@ -302,8 +312,15 @@ Include every answer number exactly once."""
         }
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(judge, hypothesis_records))
-    out = {"hypotheses": results, "n_answers": len(answers), "models": query_data.get("models", [])}
+        results = list(pool.map(judge, measured_records))
+    results.extend({
+        **record, "n_answers": len(answers), "classification_status": "unassessed",
+        "classification_errors": ["outside the five-hypothesis measurement limit"],
+        "main": None, "mentions": None, "disputes": None, "absent": None,
+        "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+    } for record in unassessed_records)
+    out = {"hypotheses": results, "n_answers": len(answers),
+           "models": query_data.get("models", []), "measurement_limit": 5}
     log_step("03b_convergence", out)
     return out
 
@@ -498,6 +515,9 @@ Return ONLY valid JSON with this exact structure:
     measured_block = ""
     conv_list = (convergence or {}).get("hypotheses", [])
     for c in conv_list:
+        if c.get("classification_status") == "unassessed":
+            measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: UNASSESSED; outside the five-hypothesis measurement limit"
+            continue
         if c.get("classification_status") != "valid":
             measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: INSUFFICIENT DATA; classification contract failed"
             continue
@@ -573,10 +593,19 @@ Score each hypothesis for AI contamination using the rubric (0=completely origin
         else:
             h["contamination_score"] = None
             h["measured"] = False
-            h["classification_status"] = "insufficient_data"
-            h["responses_matching"] = "Insufficient data: not every answer received exactly one valid classification."
+            if measured and measured.get("classification_status") == "unassessed":
+                h["classification_status"] = "unassessed"
+                h["responses_matching"] = "Unassessed: outside the five-hypothesis measurement limit."
+            else:
+                h["classification_status"] = "insufficient_data"
+                h["responses_matching"] = "Insufficient data: not every answer received exactly one valid classification."
         h["evidence_quotes"] = [str(q).strip().strip('"').strip("\u201c\u201d") for q in h.get("evidence_quotes", [])]
-        h["score_label"] = band(h["contamination_score"]) if h["contamination_score"] is not None else "Insufficient data"
+        if h["contamination_score"] is not None:
+            h["score_label"] = band(h["contamination_score"])
+        elif h["classification_status"] == "unassessed":
+            h["score_label"] = "Unassessed"
+        else:
+            h["score_label"] = "Insufficient data"
         assessed.append(h)
     valid_scores = [h["contamination_score"] for h in assessed if h["contamination_score"] is not None]
     result["hypotheses_assessed"] = assessed
@@ -1119,7 +1148,11 @@ def run_brief(
             step_errors.append({"step": name, "error": str(obj["_error"])[:300]})
     classification_failures = sum(
         1 for item in convergence.get("hypotheses", [])
-        if item.get("classification_status") != "valid"
+        if item.get("classification_status") == "insufficient_data"
+    )
+    unassessed_hypotheses = sum(
+        1 for item in convergence.get("hypotheses", [])
+        if item.get("classification_status") == "unassessed"
     )
     explanation_contract_errors = contamination.get("explanation_contract_errors", [])
     run_health = {
@@ -1130,6 +1163,7 @@ def run_brief(
         "answers_collected": len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", [])),
         "grounded": bool(archaeology.get("grounded")),
         "classification_failures": classification_failures,
+        "unassessed_hypotheses": unassessed_hypotheses,
         "explanation_contract_errors": explanation_contract_errors,
         "step_errors": step_errors,
         "run_log_dir": current_run_dir(),

@@ -37,6 +37,31 @@ def test_duplicate_or_invalid_classifier_rows_do_not_create_a_score(monkeypatch)
     assert measured["measured_score"] is None
 
 
+def test_sixth_hypothesis_is_preserved_and_marked_unassessed(monkeypatch):
+    hypotheses = [f"Hypothesis {number}" for number in range(1, 7)]
+    monkeypatch.setattr(agent, "call_json", lambda *args, **kwargs: {"verdicts": [
+        {"answer": 1, "verdict": "absent"},
+        {"answer": 2, "verdict": "absent"},
+    ]})
+    parsed = agent._attach_hypothesis_ids({"client_hypotheses": hypotheses})
+    assert parsed["client_hypotheses"] == hypotheses
+    assert len(parsed["hypothesis_records"]) == 6
+    result = agent.step_convergence(parsed, _query_data())
+    assert len(result["hypotheses"]) == 6
+    assert result["hypotheses"][5]["hypothesis"] == "Hypothesis 6"
+    assert result["hypotheses"][5]["classification_status"] == "unassessed"
+    assert result["hypotheses"][5]["measured_score"] is None
+    explanations = [{**record, "explanation": "Reviewed", "evidence_quotes": []}
+                    for record in parsed["hypothesis_records"]]
+    monkeypatch.setattr(agent, "call_json", lambda *args, **kwargs: {
+        "hypotheses_assessed": explanations, "overall_contamination_level": "Low"
+    })
+    contamination = agent.step_hypothesis_contamination(parsed, {}, _query_data(), result)
+    assert len(contamination["hypotheses_assessed"]) == 6
+    assert contamination["hypotheses_assessed"][5]["score_label"] == "Unassessed"
+    assert contamination["hypotheses_assessed"][5]["contamination_score"] is None
+
+
 def test_explanations_are_joined_by_hypothesis_id_not_position(monkeypatch):
     parsed = {"client_hypotheses": ["First claim", "Second claim"]}
     records = agent._hypothesis_records(parsed)

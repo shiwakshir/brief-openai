@@ -19,7 +19,7 @@ def build_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
             "id": str(item.get("hypothesis_id") or f"hypothesis-{index}"),
             "category": "model_convergence",
             "statement": str(item.get("hypothesis") or ""),
-            "indicator": item.get("contamination_score") if item.get("contamination_score") is not None else "Insufficient data",
+            "indicator": item.get("contamination_score") if item.get("contamination_score") is not None else item.get("score_label", "Insufficient data"),
             "basis": "computed_from_model_outputs" if item.get("contamination_score") is not None else "classification_incomplete",
             "required_action": "Decide whether this convergence is relevant to the research design.",
         })

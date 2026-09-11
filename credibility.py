@@ -23,6 +23,8 @@ def brief_assurance(
         limitations.append("Published evidence was not retrieved; source-landscape claims are model-only.")
     if int(run_health.get("classification_failures") or 0):
         limitations.append("One or more model-convergence indicators have insufficient classification data.")
+    if int(run_health.get("unassessed_hypotheses") or 0):
+        limitations.append("Additional hypotheses were preserved but not measured beyond the five-hypothesis limit.")
 
     assurance = "limited" if limitations else "moderate"
     source_count = len(archaeology.get("sources") or [])
@@ -47,6 +49,7 @@ def brief_assurance(
             "published_sources": source_count + hypothesis_sources,
             "web_grounded": bool(run_health.get("grounded")),
             "classification_failures": int(run_health.get("classification_failures") or 0),
+            "unassessed_hypotheses": int(run_health.get("unassessed_hypotheses") or 0),
             "prompt_version": run_health.get("prompt_version"),
         },
         "limitations": limitations or [
