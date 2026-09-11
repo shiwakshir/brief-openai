@@ -178,7 +178,7 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
                        for x in human_review.get("decisions") or []]
         if review_rows:
             el.append(("table", ["Finding", "Decision", "Rationale", "Amendment"], review_rows,
-                       [0.16, 0.14, 0.38, 0.32]))
+                       [0.16, 0.14, 0.38, 0.32], None))
 
     if health.get("quick_mode") or health.get("step_errors"):
         note = "Quick mode: one AI model, no web evidence. Scores are indicative. " if health.get("quick_mode") else ""
@@ -387,7 +387,7 @@ def build_audit(data: dict[str, Any]) -> list[tuple]:
                        for x in human_review.get("decisions") or []]
         if review_rows:
             el.append(("table", ["Finding", "Decision", "Rationale", "Amendment"], review_rows,
-                       [0.16, 0.14, 0.38, 0.32]))
+                       [0.16, 0.14, 0.38, 0.32], None))
 
     worst = [i for i in items if any(x.get("severity") == "high" for x in i.get("issues") or [])][:3]
     if worst:
