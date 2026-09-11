@@ -19,6 +19,12 @@ jobs:
       - run: node --check static/js/brief.js
       - run: pytest -q
       - run: pip-audit --requirement requirements.txt
+      - run: pip-audit --requirement requirements.txt --format cyclonedx-json --output sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          retention-days: 30
       - run: docker build --tag brief:test .
       - name: Smoke-test the production container
         run: |
