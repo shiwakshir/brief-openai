@@ -32,4 +32,17 @@ def build_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
             "basis": "model_judgement",
             "required_action": "Confirm against recruitment and fieldwork specifications.",
         })
+    for item in report.get("items") or []:
+        issues = item.get("issues") or []
+        if not issues:
+            continue
+        finding_id = f"instrument-{item.get('id', len(findings) + 1)}"
+        findings.append({
+            "id": finding_id,
+            "category": "instrument_wording",
+            "statement": str(item.get("text") or ""),
+            "explanation": "; ".join(str(issue.get("explanation") or "") for issue in issues),
+            "basis": "mixed_rules_and_model_judgement",
+            "required_action": "Accept, reject or amend the proposed wording change.",
+        })
     return findings
