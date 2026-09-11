@@ -231,6 +231,8 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
     label = "Sound" if score >= 80 else "Needs edits" if score >= 60 else "Rework before fieldwork"
 
     result = {
+        "status": "complete",
+        "prompt_version": __import__("config").PROMPT_VERSION,
         "instrument_type": parsed_instrument.get("instrument_type", ""),
         "sections": parsed_instrument.get("sections", []),
         "items": merged,
