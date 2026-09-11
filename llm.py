@@ -24,7 +24,12 @@ import config
 
 log = logging.getLogger("brief.llm")
 
-client = OpenAI(api_key=config.OPENAI_API_KEY, base_url=config.OPENAI_BASE_URL)
+client = OpenAI(
+    api_key=config.OPENAI_API_KEY or "missing-development-key",
+    base_url=config.OPENAI_BASE_URL,
+    timeout=config.OPENAI_TIMEOUT_SECONDS,
+    max_retries=config.OPENAI_MAX_RETRIES,
+)
 
 # A run folder per thread, so concurrent analyses do not write into each other's logs.
 _run_state = threading.local()
@@ -35,7 +40,10 @@ _run_state = threading.local()
 # ---------------------------------------------------------------------------
 
 def start_run_log() -> str | None:
-    """Create a folder for this run and return its path (None if it cannot be created)."""
+    """Create a raw trace folder only when explicitly enabled."""
+    if not config.LOG_RAW_PAYLOADS:
+        _run_state.run_dir = None
+        return None
     try:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         run_dir = os.path.join(config.RUN_LOG_DIR, f"{stamp}-{threading.get_ident() % 10000:04d}")
@@ -55,6 +63,7 @@ def log_step(name: str, payload: Any) -> None:
     """Write one agent's input/output to the current run folder."""
     run_dir = current_run_dir()
     if not run_dir:
+        log.info("step=%s completed payload_logging=disabled", name)
         return
     try:
         with open(os.path.join(run_dir, f"{name}.json"), "w", encoding="utf-8") as handle:
@@ -88,7 +97,15 @@ def call_model(
             {"role": "system", "content": system_prompt + config.STYLE_NOTE},
             {"role": "user", "content": user_message},
         ],
+        store=False,
         **kwargs,
+    )
+    log.info(
+        "model_call model=%s request_id=%s input_tokens=%s output_tokens=%s",
+        use_model,
+        getattr(response, "_request_id", None),
+        getattr(getattr(response, "usage", None), "prompt_tokens", None),
+        getattr(getattr(response, "usage", None), "completion_tokens", None),
     )
     return response.choices[0].message.content or ""
 
