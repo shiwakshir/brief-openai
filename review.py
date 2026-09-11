@@ -32,6 +32,26 @@ def build_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
             "basis": "model_judgement",
             "required_action": "Confirm against recruitment and fieldwork specifications.",
         })
+    citations = list((report.get("archaeology") or {}).get("sources") or [])
+    for evidence in (report.get("archaeology") or {}).get("hypothesis_evidence") or []:
+        for country in evidence.get("countries") or []:
+            citations.extend(country.get("for") or [])
+            citations.extend(country.get("against") or [])
+    seen_urls: set[str] = set()
+    for citation in citations:
+        url = str(citation.get("url") or "")
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        findings.append({
+            "id": f"citation-{len(seen_urls)}",
+            "category": "citation_verification",
+            "statement": str(citation.get("title") or citation.get("source") or url),
+            "explanation": url,
+            "basis": "published_evidence_unverified",
+            "required_action": "Open the source and confirm the claim, population, geography and publication date.",
+        })
+
     for item in report.get("items") or []:
         issues = item.get("issues") or []
         if not issues:
