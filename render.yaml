@@ -8,6 +8,8 @@ services:
     envVars:
       - key: BRIEF_ENVIRONMENT
         value: production
+      - key: BRIEF_POLICY_PROFILE
+        value: internal_confidential
       - key: BRIEF_LOG_RAW_PAYLOADS
         value: "false"
       - key: BRIEF_ENABLE_WEB_GROUNDING
