@@ -2,43 +2,51 @@
 
 ### Bias & Research Intelligence Evaluation Framework
 
-**An agent that audits what AI already assumes about a research topic, before any fieldwork begins.**
+**Two tools for researchers: one audits what AI already assumes about a research brief before fieldwork begins; the other audits a discussion guide or questionnaire for questions that would confirm rather than test.**
 
-Originally built for the Microsoft Agents League hackathon (Reasoning Agents track) on Microsoft Foundry, where it won the Hack for Good award. This version runs on the OpenAI API only, so it needs one API key and no Azure subscription.
+BRIEF was first built for the Microsoft Agents League hackathon (Reasoning Agents track) on Microsoft Foundry, where it won the Hack for Good award. This version runs on the OpenAI API only: one API key, no Azure subscription. It has since been extended well beyond the hackathon build; see "What changed since the hackathon" at the end.
 
 ---
 
-## Why I built this
+## Why it exists
 
 I am a market researcher. A growing part of my job, and my colleagues' jobs, now starts with an AI model: asking it to summarise a category, suggest hypotheses, or sketch an audience before we design a study.
 
-I kept noticing the same quiet failure. The model's answer is never neutral, and if you build research around it without realising that, you spend a lot of money confirming an assumption instead of discovering anything. I wanted a tool that made that risk visible before the work started, written by someone who actually sits in the research chair rather than guessing at what researchers need. BRIEF is that tool.
+The model's answer is never neutral. It reflects whatever dominated its training data, usually Western, urban, commercial, English-language sources. Two things then go wrong. The research tends to confirm what the model already believed. And respondents have often absorbed the same narratives, so even their answers echo the consensus back. The result is expensive research that validates a starting assumption rather than discovering anything, and the contamination is invisible because nobody mapped it.
 
----
-
-## The problem
-
-When a researcher leans on an AI model to frame a topic, the model reflects whatever dominated its training data: usually Western, urban, commercial, English-language sources. Two things then go wrong. The research tends to confirm what the model already believed. And the respondents themselves have often been exposed to the same narratives, so even their answers echo the consensus back.
-
-The result is expensive research that validates a starting assumption rather than discovering anything new. The contamination is invisible, because nobody mapped it.
-
-BRIEF maps it. You paste in a research brief, and the agent works out what AI currently assumes about the topic, whose perspective dominates, which of the client's hypotheses are just AI consensus repeated back, where the picture is already out of date, and how to design the research so it finds something the model could not have told you.
+BRIEF maps it, before the money is spent.
 
 ---
 
 ## What it does
 
-BRIEF takes a plain-language research brief and routes it through a multi-agent system of eleven specialised agents, coordinated by an orchestrator. The output is a structured report a researcher can act on, ending in a single Research Design Confidence Score that says how likely the study, as framed, is to surface genuine insight rather than echo the model.
+### Tool 1: audit a brief
 
-The report covers:
+Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF reads it, shows you the hypotheses it found so you can correct them, then runs twelve agents and produces a report with:
 
-- **What AI assumes** about the topic, drawn from querying the model in several consumer voices and persona variants
-- **What AI misses** - the perspectives it over-weights, the ones it skips, and the questions nobody is asking
-- **Client hypothesis contamination** - scoring how much of what the client "knows" came from AI rather than the market
-- **Temporal drift** - which assumptions are likely stale given the model's training cutoff
-- **Brand priming** - which brands the model raises unprompted, that respondents have probably already absorbed
-- **Where the assumptions come from** - a source-origin analysis grounded in live web sources via OpenAI web search, with real citations
-- **How to research it** - methodology recommendations built around the specific gaps found
+- **A research design confidence score** (0 to 100) for the study as the brief states it, with the label computed from the score
+- **A key finding** backed by a named published source or a measured count
+- **Sample fit**: hypotheses the stated sample or fieldwork location cannot test, which caps the score at 50
+- **Hypothesis contamination**: a measured score for each client hypothesis, computed from how two AI models answer twenty consumer-style questions, with the verbatim quotes behind it
+- **What AI assumes** about the topic, whose perspective dominates, what it over- and under-represents, and the unknown unknowns
+- **Published evidence** for and against each hypothesis, per country, with source and year, found by a reasoning model with web search
+- **Temporal drift**: which AI assumptions are stale, against dated sources
+- **Brand priming**: brands the model raises unprompted
+- **Methodology**: whether to keep, adjust or change the method in the brief and what that costs, plus how to test each hypothesis and what finding should make the client drop it
+- **Paste-ready outputs**: a client challenge note, discussion guide probes per hypothesis, screener criteria, and in UX mode, usability task scenarios
+- **An appendix** of every AI answer the scores were computed from
+
+### Tool 2: audit a guide or questionnaire
+
+Paste or upload a discussion guide, interview script, survey or usability test plan, optionally with the brief. In under two minutes BRIEF extracts every item, flags leading wording, presuppositions, hypothesis-confirming items, double-barrelled questions, loaded terms, priming, jargon, closing too early, unbalanced scales, social desirability and (for usability tasks) instructions that name the feature. Each flag has a severity and a neutral rewrite. With a brief supplied it also marks each client hypothesis as tested, confirmed only or untested, proposes the missing questions, and produces a clean copy of the instrument.
+
+### Two modes
+
+**Market research** (default) and **UX research**. UX mode changes what is extracted (product, user task), the personas probed (mobile-only, screen reader, first-time, frustrated power user), the blind spots checked (device, accessibility, context of use) and the methods routed to (usability testing, diary studies, card sorting, accessibility audits).
+
+### Exports
+
+Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: cover with score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, appendix of AI answers. Filenames carry the category and a timestamp.
 
 ---
 
@@ -46,166 +54,68 @@ The report covers:
 
 ![BRIEF architecture diagram](architecture.png)
 
-## How it works: a multi-agent system
+*The diagram is from the hackathon build and shows the Foundry deployment; the agent chain below is current.*
 
-BRIEF is a multi-agent system. An orchestrator (`run_brief`) takes the brief and routes it through eleven specialised agents, each with a single job, its own domain-expert instructions, and its own structured output contract. Each agent hands its findings to the next, so the system as a whole decomposes a hard, open-ended problem ("is this research design contaminated?") into focused tasks that build on one another.
-
-The design follows three reasoning patterns the track describes:
-
-- **Role-based specialisation** - each agent owns one part of the problem (parsing, querying, contamination scoring, source archaeology, and so on) rather than one model trying to do everything at once.
-- **Planner then executors** - the first agents parse the brief and plan how the topic should be probed; later agents execute that plan against the model and the live web.
-- **Critic / synthesis** - the final agent reviews every other agent's output and produces a single Research Design Confidence Score, acting as a verifier over the whole run rather than adding another isolated finding.
+An orchestrator (`run_brief` in `agent.py`) passes state through twelve agents. Each has one job, its own instructions and a JSON output contract that is checked before the next agent runs.
 
 ```
 Research brief
    |
    v
-ORCHESTRATOR  (run_brief: routes the brief, passes state between agents)
+ORCHESTRATOR (run_brief)
    |
-   1   PARSE agent          structure the brief: category, audience, objective, hypotheses
-   2   GENERATE agent       work out how real people actually query this topic
-   3   QUERY agent          probe the model in 6 base voices + 4 persona variants
-   4   CLUSTER agent        find the dominant assumptions across every response
-   5   GAP agent            compare the AI picture against the real target audience
-   6   DRIFT agent          flag assumptions likely out of date
-   7   CONTAMINATION agent  score each client hypothesis against AI consensus
-   8   COMPETITOR agent     surface brands the model raises unprompted
-   9   ARCHAEOLOGY agent    trace where the assumptions come from   [grounded by web search]
-  10   METHODOLOGY agent    recommend how to research around the gaps
-  11   SYNTHESIS agent      review all findings into one design-confidence score
+   1   PARSE           category, audience, geography, sample, fieldwork, hypotheses  [user can edit before continuing]
+   2   GENERATE        six consumer-style questions, at least one per hypothesis
+   3   QUERY           ask each probe model the six questions and four persona variants (20 answers)
+   3b  CONVERGENCE     classifier marks every answer per hypothesis: main cause / one factor / disputed / absent
+   4   CLUSTER         dominant assumptions across the answers
+   5   GAPS            over- and under-represented perspectives, audience mismatch, sample fit
+   6   CONTAMINATION   explains the measured score for each hypothesis with quotes
+   7   ARCHAEOLOGY     web-grounded evidence for and against each hypothesis, per country; source landscape
+   8   DRIFT           stale assumptions against dated evidence
+   9   COMPETITORS     brands raised unprompted
+  10   METHODOLOGY     method fit with the brief, approach, hypothesis tests
+  11   CONFIDENCE      score, label, key finding, top three risks
+  12   DELIVERABLES    challenge note, probes, screener, task scenarios
    |
    v
-Structured report
+Report, exports, run log
 ```
 
-Each agent runs inside its own error recovery, so if one agent fails it returns a safe fallback and the orchestrator continues the run rather than the whole system breaking.
-
----
-
-## Stack
-
-- **OpenAI API**: `gpt-4.1-mini` powers all eleven agents through the Chat Completions API
-- **OpenAI web search**: the archaeology agent calls the Responses API with the `web_search` tool on `gpt-5.4-mini` at low reasoning effort by default. The model plans searches, reads pages, and returns cited sources
-- **Python** orchestrator and agent definitions (`agent.py`, `audit.py`, `web_grounding.py`)
-- **Flask** backend (`app.py`) streaming each agent's progress live over server-sent events
-- **Plain HTML, CSS and JavaScript** frontend (`templates/index.html`, `static/`), no framework, no build step
-
----
-
-## How web grounding is used
-
-The archaeology agent, which traces where a topic's assumptions originate, is the grounded agent, and it is the heart of what makes BRIEF more than a clever prompt chain.
-
-Instead of letting the model guess where a topic's assumptions originate, BRIEF asks a reasoning model with the web search tool to search for the industry, media and academic sources that shape the topic. The model plans its own searches, reads results, and returns a synthesised answer with `url_citation` annotations. BRIEF feeds those grounded findings into its analysis and shows the real, clickable citations in the report.
-
-This matters for research integrity. A claim about whose voices shaped a category should itself be traceable to sources, not asserted by the same model whose bias we are trying to audit.
-
-If web search is ever unavailable, the step falls back to model-only analysis and the report shows no grounding banner, so the experience never breaks in front of a client.
-
----
-
-## Using it on a live project
-
-1. Choose **Market research** or **UX research**. UX mode changes what BRIEF extracts (product, user task), the personas it probes (mobile-only, screen reader, first-time, frustrated power user), the blind spots it checks (device, accessibility, context of use) and the methods it routes to (usability testing, diary studies, card sorting, accessibility audits). It also adds task scenarios to the outputs.
-2. Paste the brief, or upload the RFP, client email thread or kick-off deck as PDF, DOCX or TXT. BRIEF finds the brief inside a long document.
-3. Click **Review hypotheses**. BRIEF reads the brief and shows the category, audience, geography, who will be recruited, where fieldwork happens, and every client hypothesis it found. Edit them, add the beliefs the client said out loud but never wrote down, delete anything that is not a client belief. Everything downstream depends on this list.
-4. Run the analysis. Five to seven minutes. Tick **Quick mode** for a one to two minute triage run with one AI model and no web evidence; use the full run for anything you will show a client.
-5. The header has a light and dark mode switch. The choice is remembered in the browser; the first visit follows the system setting.
-6. **Export** offers Word (.docx), PDF and Markdown for both the report and the guide audit. Word and PDF are designed documents built from the structured results: a cover with the score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, and an appendix of the AI answers. Word is the one to edit, PDF the one to send. Markdown is the plain-text copy.
-7. Section 10, **Paste-ready outputs**, gives you a client challenge note, discussion guide probes per hypothesis (usability probes and task scenarios in UX mode) and screener criteria that counter the audience mismatch. Copy and edit in your own voice.
-
----
-
-## Sample fit and honest scoring
-
-BRIEF compares who the brief actually recruits, and where, against each client hypothesis. A hypothesis about older users cannot be tested on a sample aged 25 to 40; a hypothesis about people who dropped off cannot be tested on existing customers; a UK and Nigeria study with all fieldwork in London cannot speak for Nigeria. Any such mismatch appears in a red card on the summary page, caps the confidence score at 50, and is passed to the screener so the recruitment criteria fix it.
-
-The confidence agent scores the design as the brief states it. It is told not to credit the client for methods BRIEF itself recommended.
-
-A **Run health** card appears on the summary when something in the run needs a caveat: quick mode, no AI answers collected, web grounding that returned nothing, or a step that failed and used a fallback. The run log folder is named there.
-
----
-
-## Auditing a guide or questionnaire
-
-The second tab on the landing page takes a discussion guide, interview script, survey or usability test plan (pasted or uploaded) and, optionally, the client brief. In four steps and under two minutes it:
-
-1. Extracts every question, probe, task and scale item in order.
-2. Flags leading wording, presuppositions, hypothesis-confirming items, double-barrelled questions, loaded terms, priming from earlier items, jargon, closing too early, unbalanced scales, social desirability and, for usability tasks, instructions that name the feature. Each flag has a severity and a neutral rewrite in moderator language.
-3. If a brief is supplied, checks each client hypothesis for coverage: tested, confirmed only, or untested, and proposes the missing questions.
-4. Produces a clean copy of the instrument with every rewrite applied, and an exportable audit.
-
-`tests/sample-guide.md` is a deliberately flawed guide for trying it. Q2, Q4, Q7, Q8 and Q10 should be flagged; Q1, Q5 and Q9 should not.
+Each agent runs inside its own error recovery. If one fails it records the failure, returns a safe fallback and the run continues; the report shows a Run health card naming the step.
 
 ---
 
 ## How the scores are measured
 
-Contamination scores are computed, not asked for. BRIEF puts each consumer question and persona variant to every probe model (default: `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier then marks how every answer treats each client hypothesis: as the main cause (counts 1), as one factor among several (0.6), disputed (minus 0.5) or absent (0). The total is divided by the number of answers, and the report shows the counts per model. The explanation agent is told the measured score and must explain it with verbatim quotes.
+**Contamination scores are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it.
 
-Each client hypothesis is also grounded separately: a reasoning model with web search returns structured evidence for and against it, per country, with a verdict, source and year for every finding. Those findings feed the temporal drift, methodology and confidence agents, so the front page key finding and the risks can cite published sources. The methodology agent starts from the method stated in the brief and must say whether to keep, adjust or change it and what that costs. It which must name a country, an audience trait or a hypothesis in every recommendation and list the generic recommendations it rejected.
+**Evidence is grounded per hypothesis.** A reasoning model with web search returns structured findings for and against each hypothesis, per country, with verdict, source and year. These feed the drift, methodology, confidence and deliverables agents, so the front page can cite published sources.
 
----
+**Confidence scores the brief, not the recommendation.** The confidence agent is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
 
-## Testing the tool
-
-`tests/briefs.json` holds eleven briefs (ten market research, one UX) with planted biases and the flags BRIEF should raise. Run:
-
-```bash
-python evaluate.py            # all ten briefs
-python evaluate.py --dry      # list the checks without calling the API
-python evaluate.py ev-adoption-rural
-```
-
-The script prints PASS or MISS for every planted flag and every hypothesis that should score above 50, and writes a scorecard to `tests/results/`. A change to prompts or models counts as an improvement only if this score rises. A full run costs roughly eleven analyses of API usage. Add `--quick` for a cheap smoke test.
+**The guide audit score** starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short instruments. It measures wording, not study design.
 
 ---
 
-## Code layout
+## Using it
 
-```
-config.py          every setting, read once from the environment
-llm.py             model calls, JSON-with-required-keys helper, run logging
-agent.py           the twelve brief-audit agents and run_brief()
-web_grounding.py   web search with citations, structured evidence per hypothesis
-audit.py           the guide and questionnaire audit
-documents.py       PDF, DOCX and text extraction for uploads
-export.py          designed Word and PDF documents from the result data
-app.py             Flask routes, sessions, server-sent progress
-Dockerfile         container build; render.yaml and Procfile for PaaS hosts
-templates/         index.html (markup only)
-static/            css/brief.css and js/brief.js (no build step)
-tests/             offline unit tests, the evaluation brief set, a sample guide
-evaluate.py        runs the brief set through the tool and scores what it caught
-```
-
-Run the offline tests with `python -m unittest discover -s tests`. They use a fake model client, need no API key, and check the plumbing: step order, key passing, fallbacks, scoring arithmetic and quick mode. `evaluate.py` measures output quality against real briefs and does need a key.
+1. Choose the tool tab and the mode (Market or UX).
+2. Paste the text, or upload PDF, DOCX, TXT or MD. Clear empties the boxes.
+3. Brief audit only: click **Review hypotheses**, check what was read, edit the hypotheses, sample and fieldwork, then **Run the analysis**. Tick **Quick mode** for a one to two minute run with one model and no web evidence; use the full run (five to seven minutes) for anything a client will see.
+4. Read the report in the browser or export it. The header switches light and dark mode.
 
 ---
 
-## Inspecting a run
+## Trying it
 
-Every analysis writes each agent's raw output to `runs/<timestamp>/`, one JSON file per step (`01_parse.json` to `11_confidence.json`). If a step fails, an `error_<step>.json` file records why. Use these to check a score against the evidence, or to debug a run. The folder is excluded from git.
+Three briefs and a flawed guide are in `tests/`. The quickest check is the guide audit: paste `tests/sample-guide.md` with the bank brief from `tests/briefs.json` in the optional box. Expected: Q2, Q3, Q4, Q6, Q7, Q8 and Q10 flagged; Q1, Q5 and Q9 clean; "lack financial literacy" marked confirmed only.
 
-Every agent calls the model in JSON mode and checks that the required keys are present. If a key is missing the agent retries once with a correction, then fails loudly, so a bad reply can no longer pass silently downstream.
+A brief to try:
 
-The contamination scores follow a written rubric and must be backed by quotes from the AI answers. Section 09 of the report shows all ten answers in full, and the export includes them as an appendix.
+> Research for a European car maker into electric vehicle adoption barriers among rural households in France, Spain and Romania. The client assumes range anxiety is the main barrier and that better public charging will unlock demand. Method: 30 in-depth interviews in each market.
 
----
-
-## Reliability and safety
-
-- Every reasoning step has its own error recovery; one failed step cannot break the run
-- Web grounding fails soft to model-only analysis
-- Briefs are validated and length-capped before processing
-- Sessions are cleaned up on a TTL and every run has a hard timeout
-- The interface uses the Atkinson Hyperlegible typeface and honours reduced-motion preferences, so the tool is usable by researchers with dyslexia or motion sensitivity
-
----
-
-## Built during the hacking window
-
-BRIEF was built new for this hackathon. The idea grew out of a problem I keep running into in my own research work, but the multi-agent system, the orchestrator, the model deployment, the web grounding, the confidence-scoring agent, and the entire interface were all built during the event.
+Expected: range anxiety scores above 50 for contamination; the evidence shows purchase price outranks it in France and Romania; Romania is treated separately; home charging undercuts the public-charging hypothesis.
 
 ---
 
@@ -215,29 +125,67 @@ BRIEF was built new for this hackathon. The idea grew out of a problem I keep ru
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root (see `.env.example`):
-
-```
-OPENAI_API_KEY=your_key
-```
-
-Then start the app:
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Then:
 
 ```bash
 python app.py
 ```
 
-Open `http://localhost:5000`, paste in a research brief, and run the analysis. Watch the eleven steps stream live, then read the report.
-
-Optional settings, all with defaults:
+Open `http://localhost:5000`.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `OPENAI_MODEL` | `gpt-4.1-mini` | Model for the eleven agents |
-| `OPENAI_GROUNDING_MODEL` | `gpt-5.4-mini` | Reasoning model for web-grounded archaeology |
-| `OPENAI_GROUNDING_EFFORT` | `low` | Reasoning effort for grounding: `low`, `medium` or `high` |
+| `OPENAI_API_KEY` | required | Key from an organisation-owned OpenAI project |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Model for the agents |
 | `OPENAI_PROBE_MODELS` | `gpt-4.1-mini,gpt-5.4-mini` | Models whose answers are measured for consensus |
+| `OPENAI_GROUNDING_MODEL` | `gpt-5.4-mini` | Reasoning model for web-grounded evidence |
+| `OPENAI_GROUNDING_EFFORT` | `low` | `low`, `medium` or `high`; medium is slower and searches more |
+| `OPENAI_BASE_URL` | unset | Route API calls through an internal gateway |
 | `BRIEF_PASSWORD` | unset | Shared password for a hosted instance |
+| `BRIEF_RUN_LOG_DIR` | `runs` | Where run logs are written |
+
+---
+
+## Testing
+
+**Offline unit tests** (no API key, under a second): `python -m unittest discover -s tests`. A fake model client exercises the plumbing: step order, key passing, fallbacks, scoring arithmetic, the confidence cap and label, quick mode, the audit counting rules, and the Word and PDF exporters.
+
+**Evaluation set**: `tests/briefs.json` holds eleven briefs (ten market research, one UX) with planted biases and the flags BRIEF should raise.
+
+```bash
+python evaluate.py                 # all eleven briefs, about eleven analyses of API usage
+python evaluate.py --quick         # cheap smoke test, one model, no web search
+python evaluate.py --dry           # list the checks without calling the API
+python evaluate.py ev-adoption-rural
+```
+
+It prints PASS or MISS per planted flag and writes a scorecard to `tests/results/`. A change to prompts or models counts as an improvement only if this score rises.
+
+---
+
+## Inspecting a run
+
+Every analysis writes one JSON file per agent to `runs/<timestamp>/` (`01_parse.json` through `12_deliverables.json`, plus `03b_convergence.json` and `09a_hypothesis_grounding.json`). A failed step writes `error_<step>.json`. This is how any number in the report can be traced to what the agent saw and said. The report's Run health card names the folder.
+
+---
+
+## Code layout
+
+```
+config.py          every setting, read once from the environment
+llm.py             model client, JSON-with-required-keys helper, run logging
+agent.py           the twelve brief-audit agents and run_brief()
+web_grounding.py   web search with citations; structured evidence per hypothesis
+audit.py           the guide and questionnaire audit
+documents.py       PDF, DOCX and text extraction for uploads
+export.py          designed Word and PDF documents from the result data
+app.py             Flask routes, sessions, server-sent progress
+templates/         index.html (markup only)
+static/            css/brief.css and js/brief.js (no build step)
+tests/             unit tests, evaluation brief set, sample guide
+evaluate.py        runs the brief set and scores what BRIEF caught
+Dockerfile         container build; render.yaml and Procfile for PaaS hosts
+```
 
 ---
 
@@ -340,25 +288,26 @@ The repo includes a `render.yaml` and a `Procfile`. On Render:
 2. Set `OPENAI_API_KEY` and `BRIEF_PASSWORD` in the environment settings.
 3. Share the URL and the password.
 
-Run one gunicorn worker only. Sessions live in process memory, so a second worker cannot see them. The `render.yaml` and `Procfile` already set this. A free Render instance sleeps after 15 minutes without traffic and takes about a minute to wake.
+Run one worker only; sessions live in process memory. A free Render instance sleeps after 15 minutes without traffic and takes about a minute to wake; the Starter tier removes that.
 
 ---
 
-## Try it with this brief
+## What changed since the hackathon
 
-> We are conducting research for a global beverage brand exploring consumer attitudes toward health and wellness drinks among Gen Z adults aged 18 to 25. The client believes Gen Z prioritises natural ingredients and sustainability above taste and price. Research will be conducted across the UK, US, and India.
+The hackathon build had eleven agents on Foundry, one probe model, a single grounded "archaeology" call, and a browser-only report. Since then:
 
-BRIEF will flag the Anglo-centric framing, score the client's "natural and sustainable" hypothesis for contamination, surface the brands the model raises unprompted, and ground its source analysis in live web citations about the beverage category.
+- Moved from Azure OpenAI and Foundry IQ to the OpenAI API with the Responses web search tool
+- Contamination scores measured by a classifier across two models instead of asked of one model
+- Evidence grounded per hypothesis, per country, structured with verdict, source and year
+- Sample-fit check, honest scoring of the stated design, computed labels
+- Editable hypotheses before the run; document upload; quick mode; run health; run logs per agent
+- UX research mode
+- Paste-ready outputs: challenge note, probes, screener, task scenarios
+- The guide and questionnaire audit as a second tool
+- Word and PDF exports, light and dark mode
+- Refactor into config, llm, agent, audit, grounding, documents, export and app modules; offline test suite; evaluation set
 
----
-
-## Roadmap
-
-Explored during the event and deferred for after submission:
-
-- **Multi-market divergence** - running the chain per market and surfacing where the AI picture diverges across geographies
-- **Living brief** - re-running the audit as a brief evolves, tracking how contamination changes over time
-- **Fieldwork calibration** - comparing the AI assumptions against real fieldwork results to score how well BRIEF predicted the gaps
+Still open: running the same brief over time to see how contamination drifts; comparing predicted gaps against real fieldwork results, which is the only true test of whether the tool works.
 
 ---
 
