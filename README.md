@@ -25,9 +25,9 @@ BRIEF maps it, before the money is spent.
 
 ### Tool 1: audit a brief
 
-Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF reads it, shows you the hypotheses it found so you can correct them, then runs twelve agents and produces a report with:
+Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF reads it, shows you the hypotheses it found so you can correct them, then runs twelve analysis stages and produces an advisory report with:
 
-- **A research design confidence score** (0 to 100) for the study as the brief states it, with the label computed from the score
+- **A heuristic research-design review indicator** (0 to 100) for the study as the brief states it, with the label computed from the score
 - **A key finding** backed by a named published source or a measured count
 - **Sample fit**: hypotheses the stated sample or fieldwork location cannot test, which caps the score at 50
 - **Hypothesis contamination**: a measured score for each client hypothesis, computed from how two AI models answer twenty consumer-style questions, with the verbatim quotes behind it
@@ -54,7 +54,7 @@ Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed docume
 ---
 
 
-An orchestrator (`run_brief` in `agent.py`) passes state through twelve agents. Each has one job, its own instructions and a JSON output contract that is checked before the next agent runs.
+An orchestrator (`run_brief` in `agent.py`) passes state through twelve model-assisted analysis stages. These stages are not independent experts: they share upstream outputs and may share training-data patterns. Each stage has a scoped instruction and output contract.
 
 ```
 Research brief
@@ -84,13 +84,17 @@ Each agent runs inside its own error recovery. If one fails it records the failu
 
 ---
 
-## How the scores are measured
+## Methodological status
+
+BRIEF is an advisory research quality-assurance assistant, not an automated approval system. Its numerical outputs are heuristic review indicators, not validated measures of bias, contamination, truth, construct validity or likely project success. Every result includes its evidence basis, limitations and required human decisions. See [Methodological assurance](docs/ASSURANCE.md).
+
+## How the indicators are calculated
 
 **Contamination scores are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it.
 
 **Evidence is grounded per hypothesis.** A reasoning model with web search returns structured findings for and against each hypothesis, per country, with verdict, source and year. These feed the drift, methodology, confidence and deliverables agents, so the front page can cite published sources.
 
-**Confidence scores the brief, not the recommendation.** The confidence agent is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
+**The research-design review indicator assesses the brief, not the recommendation.** The confidence agent is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
 
 **The guide audit score** starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short instruments. It measures wording, not study design.
 
@@ -161,7 +165,7 @@ Open `http://localhost:5000`.
 
 ## Inspecting a run
 
-Every analysis writes one JSON file per agent to `runs/<timestamp>/` (`01_parse.json` through `12_deliverables.json`, plus `03b_convergence.json` and `09a_hypothesis_grounding.json`). A failed step writes `error_<step>.json`. This is how any number in the report can be traced to what the agent saw and said. The report's Run health card names the folder.
+Raw trace logging is disabled by default. When explicitly enabled under an approved retention policy, an analysis writes JSON traces under `runs/`. Normal operational logs contain stage completion, model, request ID and token metadata rather than brief or response content.
 
 ---
 
