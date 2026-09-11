@@ -334,9 +334,9 @@ def export():
         body, mime, ext = export_document(kind, payload, fmt)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
+    except Exception:
         log.exception("export failed")
-        return jsonify({"error": f"Export failed: {exc}"}), 500
+        return jsonify({"error": "The export could not be generated."}), 500
     return Response(body, mimetype=mime, headers={"Content-Disposition": f'attachment; filename="{filename}.{ext}"'})
 
 
