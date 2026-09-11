@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dotenv import load_dotenv
 
+from policy import enforce as enforce_policy, get_policy
+
 load_dotenv()
 
 
@@ -29,7 +31,7 @@ def _int(name: str, default: int, minimum: int = 1) -> int:
     return value
 
 
-ENVIRONMENT = os.getenv("BRIEF_ENVIRONMENT", "development").strip().lower()
+ENVIRONMENT = os.getenv("BRIEF_ENVIRONMENT", "development").strip().lower()\nPOLICY_PROFILE = os.getenv("BRIEF_POLICY_PROFILE", "internal_confidential").strip()
 PROMPT_VERSION = os.getenv("BRIEF_PROMPT_VERSION", "2026-09-11")
 
 # OpenAI
@@ -71,10 +73,15 @@ MIN_BRIEF_LENGTH = 50
 MAX_BRIEF_LENGTH = 24000
 MIN_INSTRUMENT_LENGTH = 80
 MAX_INSTRUMENT_LENGTH = 40000
-STYLE_NOTE = "\n\nUse British English spelling."
+STYLE_NOTE = "\n\nUse British English spelling."\nACTIVE_POLICY = get_policy(POLICY_PROFILE)
 
 
 def validate_startup() -> None:
+    enforce_policy(
+        ACTIVE_POLICY,
+        web_grounding=ENABLE_WEB_GROUNDING,
+        raw_payload_logging=LOG_RAW_PAYLOADS,
+    )
     if ENVIRONMENT not in {"development", "test"}:
         if not OPENAI_API_KEY:
             raise RuntimeError("OPENAI_API_KEY is required outside development/test")
