@@ -12,7 +12,7 @@ def test_full_research_workflow_is_present_on_homepage():
     html = response.get_data(as_text=True)
     assert response.status_code == 200
     for element_id in (
-        "brief-input", "guide-input", "review-section", "progress-section",
+        "brief-input", "guide-input", "rv-topic", "review-section", "progress-section",
         "panel-contamination", "panel-archaeology", "panel-evidence",
         "panel-deliverables", "panel-review", "panel-areview",
     ):
@@ -31,6 +31,8 @@ def test_frontend_uses_csp_safe_external_event_wiring():
     assert "function submitReview" in javascript
     assert "function renderDeliverables" in javascript
     assert "function renderEvidence" in javascript
+    assert "function safeUrl" in javascript
+    assert "p.topic = document.getElementById('rv-topic')" in javascript
 
 
 def test_incomplete_hypothesis_classification_never_renders_as_zero():

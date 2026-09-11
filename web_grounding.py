@@ -37,13 +37,15 @@ LOW_VALUE_URL_MARKERS = ("/about", "about-us", "about_us", "/o-nas", "/ueber-uns
 
 
 def _clean_url(url: str) -> str:
-    """Remove tracking parameters such as utm_source so citations are clean."""
+    """Keep only HTTP(S) URLs and remove tracking parameters."""
     try:
-        parts = urlsplit(url)
+        parts = urlsplit(url.strip())
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            return ""
         query = [(k, v) for k, v in parse_qsl(parts.query) if not k.lower().startswith("utm_")]
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
     except Exception:
-        return url
+        return ""
 
 
 _MD_LINK = re.compile(r"\(?\[([^\]]*)\]\((https?://[^)\s]+)\)\)?")

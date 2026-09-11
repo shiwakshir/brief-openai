@@ -31,6 +31,7 @@ ProgressCallback = Callable[[str, int, int], None]
 # Kept as a module attribute so tests and evaluate.py can override it.
 PROBE_MODELS = config.PROBE_MODELS
 MODEL = config.MODEL
+ACRONYMS = {"uk", "us", "usa", "eu", "ux", "ai", "nhs", "b2b", "b2c", "cx", "roi", "kpi", "gen", "id"}
 
 
 UX_MODE_NOTE = """
@@ -91,6 +92,7 @@ Return ONLY valid JSON with exactly these fields:
   "research_objective": "what the researcher wants to discover or validate",
   "client_hypotheses": ["list", "of", "stated", "assumptions", "or", "hypotheses"],
   "methodology_hints": "any methodology mentioned (qual/quant/survey/usability test/etc) or 'Not specified'",
+  "topic": "the specific product, behaviour or decision under study, as a short phrase a participant would use (e.g. 'buying fresh fish at the supermarket', not 'supermarket grocery shopping')",
   "sample_definition": "who will actually be recruited or surveyed, as the brief states it (e.g. 'existing customers aged 25 to 40'), or 'Not specified'",
   "fieldwork_locations": "where fieldwork will happen, as stated (e.g. 'London only'), or 'Not specified'",
   "product_or_service": "for UX briefs: the product, service or interface under study; otherwise ''",
@@ -103,6 +105,8 @@ Return ONLY valid JSON with exactly these fields:
                        required_keys=("core_question", "category", "target_audience", "geography", "client_hypotheses"))
     result["research_mode"] = "ux" if str(mode).lower() == "ux" else "market"
     result.setdefault("sample_definition", "Not specified")
+    if not str(result.get("topic", "")).strip():
+        result["topic"] = result.get("product_or_service") or result.get("category", "this topic")
     result.setdefault("fieldwork_locations", "Not specified")
     return result
 
@@ -118,6 +122,7 @@ Return ONLY valid JSON with this exact structure:
 
     user = f"""Generate 6 natural consumer-style prompts for:{mode_note(parsed)}
 Client hypotheses (at least one prompt must give AI a natural opening to raise EACH of these, without naming it; the rest cover the category broadly): {json.dumps(parsed.get('client_hypotheses', []))}
+Specific topic (use this, not the broad category): {parsed.get('topic', '')}
 Product or service: {parsed.get('product_or_service', '')}
 Category: {parsed.get('category', '')}
 Core question: {parsed.get('core_question', '')}
@@ -136,7 +141,7 @@ def step_query(prompts, parsed, probe_models=None):
     """
     base_system = """You are a helpful assistant. Answer the question naturally and informatively."""
 
-    category = parsed.get('category', 'this topic')
+    category = parsed.get('topic') or parsed.get('category', 'this topic')
     core_q = parsed.get('core_question', '')
 
     if mode_note(parsed):
@@ -369,10 +374,14 @@ def step_gap_analysis(parsed, clusters):
 Compare what AI assumes about a topic versus what the actual research audience needs.
 Also check sample fit: compare who will actually be recruited, and where, against each
 client hypothesis and the stated geography. List a hypothesis in sample_cannot_test ONLY
-when the sample excludes the people it is about by definition (hypothesis about older users,
-sample aged 25 to 40; hypothesis about drop-off, sample of existing customers) or when the
-fieldwork for the relevant method covers only part of the stated geography (interviews in
-the UK only for a UK and Italy study). A sample that is merely skewed or likely biased
+when the sample excludes the people it is about by definition, or when the fieldwork for the
+relevant method covers only part of the stated geography. Check these patterns explicitly:
+- age or segment exclusion: a hypothesis about older users with a sample aged 25 to 40
+- lapsed people: a hypothesis about why people stopped, cancelled, dropped off or buy less,
+  tested only on current customers, loyalty members or people intercepted at the point of sale;
+  those people are still present, while the hypothesis concerns people who are no longer there
+- geography: interviews in one city or country for a national or multi-country claim
+A sample that is merely skewed or likely biased
 ("may over-represent premium buyers") belongs in audience_mismatch, not here. Leave the
 list empty if the sample fits.
 Return ONLY valid JSON with this exact structure:
@@ -871,7 +880,7 @@ Return ONLY valid JSON with this exact structure:
   "confidence_label": "Strong (75+) / Adequate (55-74) / Fragile (40-54) / Compromised (below 40); must match the score",
   "headline": "one plain, direct sentence a researcher could say to their client",
   "key_finding": {
-    "statement": "the single most important evidence-based finding for this client, one or two sentences. It must contain a specific figure, a named source, or a concrete country contrast. Phrases like 'vary notably' or 'nuanced' without a specific are not acceptable",
+    "statement": "the single most important evidence-based finding for this client, one or two sentences. It must contain a specific figure, a named source, or a concrete country contrast. Phrases like 'vary notably' or 'nuanced' without a specific are not acceptable. Check the direction: every figure must support the claim beside it (for example, 89% confident indicates high confidence and cannot support a claim of low confidence)",
     "basis": "measured AI consensus | published evidence | both",
     "sources": ["publisher and title of up to three sources that support it"]
   },
@@ -999,6 +1008,8 @@ Write the three deliverables."""
     note = result.get("challenge_note") or {}
     title = str(note.get("title", "")).strip()
     if title:
+        words = title.split()
+        title = " ".join(word.upper() if word.lower().strip(",.:") in ACRONYMS else word for word in words)
         note["title"] = title[0].upper() + title[1:]
     return result
 
@@ -1028,7 +1039,7 @@ def parse_brief(brief: str, mode: str = "market") -> Parsed:
         "core_question": "Could not parse", "category": "Unknown",
         "target_audience": "Unknown", "geography": "Global",
         "research_objective": "Unknown", "client_hypotheses": [],
-        "methodology_hints": "Not specified", "product_or_service": "", "user_task": "",
+        "methodology_hints": "Not specified", "topic": "Unknown", "product_or_service": "", "user_task": "",
         "research_mode": "ux" if str(mode).lower() == "ux" else "market"
     }, brief, mode)
 
@@ -1058,6 +1069,8 @@ def run_brief(
     progress("Reading your brief", 1)
     if isinstance(parsed_override, dict) and parsed_override.get("category"):
         parsed = dict(parsed_override)
+        if not str(parsed.get("topic", "")).strip():
+            parsed["topic"] = parsed.get("product_or_service") or parsed.get("category", "this topic")
         parsed["client_hypotheses"] = [str(h).strip() for h in parsed.get("client_hypotheses", []) if str(h).strip()]
         parsed["research_mode"] = "ux" if str(parsed.get("research_mode", mode)).lower() == "ux" else "market"
         log_step("01_parse", {"result": parsed, "source": "user-reviewed"})

@@ -128,6 +128,70 @@ def test_hypothesis_grounding_requires_each_finding_url_to_be_retrieved(monkeypa
     assert retrieved["human_verified"] is False
 
 
+def test_citation_urls_are_limited_to_http_and_https():
+    assert web_grounding._clean_url("javascript:alert(1)") == ""
+    assert web_grounding._clean_url("/relative/source") == ""
+    assert web_grounding._clean_url("https://example.test/study?utm_source=x&year=2025") == \
+        "https://example.test/study?year=2025"
+
+
+def test_specific_topic_is_preserved_and_used_for_probe_generation(monkeypatch):
+    calls = []
+
+    def fake_json(step, system, user, **kwargs):
+        calls.append((step, system, user))
+        if step == "01_parse":
+            return {
+                "core_question": "Why do people choose fresh fish?",
+                "category": "supermarket grocery shopping",
+                "topic": "buying fresh fish at the supermarket",
+                "target_audience": "UK shoppers",
+                "geography": "UK",
+                "client_hypotheses": ["Freshness drives choice"],
+            }
+        return {"prompts": ["How do I choose fresh fish?"] * 6}
+
+    monkeypatch.setattr(agent, "call_json", fake_json)
+    parsed = agent.step_parse("A detailed research brief " * 4)
+    agent.step_generate(parsed)
+    assert parsed["topic"] == "buying fresh fish at the supermarket"
+    assert "Specific topic (use this, not the broad category): buying fresh fish at the supermarket" in calls[-1][2]
+
+
+def test_topic_falls_back_and_reference_prompt_refinements_are_present(monkeypatch):
+    captured = {}
+
+    def fake_json(step, system, user, **kwargs):
+        captured[step] = system
+        if step == "01_parse":
+            return {
+                "core_question": "Question", "category": "payments", "target_audience": "Adults",
+                "geography": "UK", "client_hypotheses": [], "product_or_service": "",
+            }
+        if step == "05_gaps":
+            return {"overrepresented": [], "underrepresented": [], "audience_mismatch": "",
+                    "sample_cannot_test": []}
+        return {"confidence_score": 50, "confidence_label": "Fragile", "headline": "Review",
+                "top_three_risks": []}
+
+    monkeypatch.setattr(agent, "call_json", fake_json)
+    parsed = agent.step_parse("A detailed research brief " * 4)
+    assert parsed["topic"] == "payments"
+    agent.step_gap_analysis(parsed, {})
+    agent.step_confidence(parsed, {}, {}, {}, {}, {}, {})
+    assert "lapsed people" in captured["05_gaps"]
+    assert "Check the direction" in captured["11_confidence"]
+
+
+def test_deliverable_titles_preserve_known_acronyms(monkeypatch):
+    monkeypatch.setattr(agent, "call_json", lambda *args, **kwargs: {
+        "challenge_note": {"title": "improving uk ux with ai"},
+        "discussion_guide_probes": [], "screener_criteria": [],
+    })
+    result = agent.step_deliverables({}, {}, {}, {}, {}, {})
+    assert result["challenge_note"]["title"] == "Improving UK UX with AI"
+
+
 def test_evaluator_does_not_reward_repeating_the_input_and_enforces_thresholds():
     case = {"id": "echo", "expected_findings": [{
         "category": "risk_to_fieldwork", "phrases": ["lack financial literacy"]

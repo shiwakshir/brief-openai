@@ -33,7 +33,7 @@ def _int(name: str, default: int, minimum: int = 1) -> int:
 
 ENVIRONMENT = os.getenv("BRIEF_ENVIRONMENT", "development").strip().lower()
 POLICY_PROFILE = os.getenv("BRIEF_POLICY_PROFILE", "internal_confidential").strip()
-PROMPT_VERSION = os.getenv("BRIEF_PROMPT_VERSION", "2026-09-11")
+PROMPT_VERSION = os.getenv("BRIEF_PROMPT_VERSION", "2026-09-11.2-topic-alignment")
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

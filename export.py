@@ -203,7 +203,8 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
 
     el.append(("pagebreak",))
     el.append(("h", 1, "The brief as read"))
-    facts = [("Category", parsed.get("category")), ("Audience", parsed.get("target_audience")),
+    facts = [("Category", parsed.get("category")), ("Specific topic", parsed.get("topic")),
+             ("Audience", parsed.get("target_audience")),
              ("Geography", parsed.get("geography")), ("Objective", parsed.get("research_objective")),
              ("Stated method", parsed.get("methodology_hints")), ("Recruits", parsed.get("sample_definition")),
              ("Fieldwork", parsed.get("fieldwork_locations")), ("Product", parsed.get("product_or_service"))]

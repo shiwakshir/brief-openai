@@ -66,6 +66,17 @@ function infCls(level) {
   return 'inf-absent';
 }
 
+function safeUrl(value) {
+  try {
+    const raw = String(value || '').trim();
+    if (!/^https?:\/\//i.test(raw)) return '';
+    const url = new URL(raw);
+    return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 function esc(s) {
   if (!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -194,6 +205,7 @@ async function reviewBrief() {
     if (data.error) { showError(data.error); return; }
     const p = data.parsed || {};
     document.getElementById('rv-category').value = p.category || '';
+    document.getElementById('rv-topic').value = p.topic || p.product_or_service || p.category || '';
     document.getElementById('rv-audience').value = p.target_audience || '';
     document.getElementById('rv-geography').value = p.geography || '';
     document.getElementById('rv-product').value = p.product_or_service || '';
@@ -215,6 +227,7 @@ async function reviewBrief() {
 function collectParsed() {
   const p = Object.assign({}, reviewedParsed || {});
   p.category = document.getElementById('rv-category').value.trim() || p.category;
+  p.topic = document.getElementById('rv-topic').value.trim() || p.product_or_service || p.category;
   p.target_audience = document.getElementById('rv-audience').value.trim() || p.target_audience;
   p.geography = document.getElementById('rv-geography').value.trim() || p.geography;
   p.product_or_service = document.getElementById('rv-product').value.trim();
@@ -637,6 +650,7 @@ function renderBrief(p) {
   document.getElementById('panel-brief-content').innerHTML = `
     <div class="meta-row">
       <div class="meta-pill"><span class="meta-key">Category</span><span class="meta-val">${esc(p.category)}</span></div>
+      ${p.topic ? `<div class="meta-pill"><span class="meta-key">Topic</span><span class="meta-val">${esc(p.topic)}</span></div>` : ''}
       <div class="meta-pill"><span class="meta-key">Geography</span><span class="meta-val">${esc(p.geography)}</span></div>
       <div class="meta-pill"><span class="meta-key">Method</span><span class="meta-val">${esc(p.methodology_hints)}</span></div>
       <div class="meta-pill"><span class="meta-key">Mode</span><span class="meta-val">${p.research_mode === 'ux' ? 'UX research' : 'Market research'}</span></div>
@@ -831,8 +845,8 @@ function renderArchaeology(a) {
     ? `<div class="iq-banner"><span class="iq-banner-dot"></span><span class="iq-banner-text">Retrieved sources are available · every consequential claim still requires human verification</span></div>`
     : '';
 
-  const citations = (a.sources || []).filter(c => c.url && !/follow us|facebook|@\w+|download\?|cookie|sign in|log in/i.test(c.title || '')).map(c => `
-    <a class="citation" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">
+  const citations = (a.sources || []).filter(c => safeUrl(c.url) && !/follow us|facebook|@\w+|download\?|cookie|sign in|log in/i.test(c.title || '')).map(c => `
+    <a class="citation" href="${esc(safeUrl(c.url))}" target="_blank" rel="noopener noreferrer">
       <div class="citation-title">${esc(c.title)}</div>
       ${c.url ? `<div class="citation-url">${esc(c.url)}</div>` : ''}
       ${c.snippet ? `<div class="citation-snippet">${esc(c.snippet)}</div>` : ''}
@@ -844,7 +858,7 @@ function renderArchaeology(a) {
       <span class="ev-kind">${kind === 'for' ? 'FOR' : 'AGAINST'}</span>
       <div>
         <div>${esc(f.finding)}</div>
-        <div class="citation-url">${f.source_retrieved === true && f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(f.source || f.url)}</a>` : 'No matching retrieved source'}${f.year ? ' · ' + esc(f.year) : ''} · ${esc(f.verification_status || 'unverified')}</div>
+        <div class="citation-url">${f.source_retrieved === true && safeUrl(f.url) ? `<a href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener noreferrer">${esc(f.source || f.url)}</a>` : 'No matching retrieved source'}${f.year ? ' · ' + esc(f.year) : ''} · ${esc(f.verification_status || 'unverified')}</div>
       </div>
     </div>`;
   const hypEvidence = (a.hypothesis_evidence || []).map(he => `
@@ -1091,6 +1105,7 @@ function buildReportMarkdown() {
 
   md += '---\n\n## Brief\n\n';
   md += '- **Category:** ' + (p.category || '') + '\n';
+  md += '- **Specific topic:** ' + (p.topic || p.product_or_service || p.category || '') + '\n';
   md += '- **Geography:** ' + (p.geography || '') + '\n';
   md += '- **Audience:** ' + (p.target_audience || '') + '\n';
   md += '- **Objective:** ' + (p.research_objective || '') + '\n\n';
