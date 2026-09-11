@@ -59,6 +59,7 @@ class Session:
     progress: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None
     review: dict[str, Any] | None = None
+    cancelled: threading.Event = field(default_factory=threading.Event)
 
 
 class SessionStore:
@@ -102,6 +103,8 @@ def _start_background(session_id: str, work) -> None:
     session = sessions.get(session_id, g.identity)
 
     def on_progress(step_name: str, step_number: int, total_steps: int) -> None:
+        if session.cancelled.is_set():
+            raise RuntimeError("Job cancelled")
         session.progress.append({
             "step": step_name, "number": step_number, "total": total_steps,
             "pct": int(step_number / total_steps * 100),
@@ -116,9 +119,13 @@ def _start_background(session_id: str, work) -> None:
             session.result = {"status": "done", "data": report}
             metrics.observe_job(started, "completed")
         except Exception:
-            log.exception("background run failed")
-            session.result = {"status": "error", "message": "The analysis failed. Quote the job ID to support."}
-            metrics.observe_job(started, "failed")
+            if session.cancelled.is_set():
+                session.result = {"status": "cancelled", "message": "The analysis was cancelled."}
+                metrics.observe_job(started, "cancelled")
+            else:
+                log.exception("background run failed")
+                session.result = {"status": "error", "message": "The analysis failed. Quote the job ID to support."}
+                metrics.observe_job(started, "failed")
         finally:
             job_slots.release()
 
@@ -279,6 +286,18 @@ def audit():
     return jsonify({"session_id": session_id})
 
 
+@app.route("/cancel/<session_id>", methods=["POST"])
+def cancel_session(session_id: str):
+    session = sessions.get(session_id, g.identity)
+    if session is None:
+        return jsonify({"error": "Unknown session."}), 404
+    if session.result is not None:
+        return jsonify({"error": "The job has already finished."}), 409
+    session.cancelled.set()
+    metrics.increment("jobs_cancel_requested")
+    return jsonify({"status": "cancelling"})
+
+
 @app.route("/review/<session_id>", methods=["POST"])
 def review_session(session_id: str):
     session = sessions.get(session_id, g.identity)
@@ -368,7 +387,8 @@ def progress(session_id: str):
                 yield f"data: {json.dumps({'type': 'result', **session.result})}\n\n"
                 return
             if time.time() - started > config.RUN_TIMEOUT_SECONDS:
-                yield f"data: {json.dumps({'type': 'result', 'status': 'error', 'message': 'Analysis timed out. Please try again with a shorter brief.'})}\n\n"
+                session.cancelled.set()
+                yield f"data: {json.dumps({'type': 'result', 'status': 'error', 'message': 'Analysis timed out and cancellation was requested.'})}\n\n"
                 return
             time.sleep(0.5)
 
