@@ -356,6 +356,7 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
 
 def build_audit(data: dict[str, Any]) -> list[tuple]:
     sm = data.get("summary") or {}
+    assurance = data.get("assurance") or {}
     items = data.get("items") or []
     cov = data.get("coverage") or {}
     el: list[tuple] = []
