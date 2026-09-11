@@ -169,6 +169,15 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
             el.append(("h", 3, "Reviewer sign-off"))
             el.append(("numbered", decisions))
 
+    if human_review:
+        status = "Complete" if human_review.get("complete") else "Incomplete"
+        el.append(("callout", "neutral", "Researcher adjudication", f"{status}. Reviewer: {_s(human_review.get('reviewer'))}. Reviewed: {_s(human_review.get('reviewed_at'))}."))
+        review_rows = [[_s(x.get("finding_id")), _s(x.get("decision")), _s(x.get("rationale"), 500), _s(x.get("amendment"), 500)]
+                       for x in human_review.get("decisions") or []]
+        if review_rows:
+            el.append(("table", ["Finding", "Decision", "Rationale", "Amendment"], review_rows,
+                       [0.16, 0.14, 0.38, 0.32]))
+
     if health.get("quick_mode") or health.get("step_errors"):
         note = "Quick mode: one AI model, no web evidence. Scores are indicative. " if health.get("quick_mode") else ""
         if health.get("step_errors"):
@@ -368,6 +377,15 @@ def build_audit(data: dict[str, Any]) -> list[tuple]:
                     f"{sm.get('medium', 0)} medium, {sm.get('low', 0)} low. {sm.get('items_confirming', 0)} restate a client hypothesis."))
     el.append(("small", "Score starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short "
                         "instruments. It measures wording, not study design."))
+    if human_review:
+        status = "Complete" if human_review.get("complete") else "Incomplete"
+        el.append(("callout", "neutral", "Researcher adjudication", f"{status}. Reviewer: {_s(human_review.get('reviewer'))}. Reviewed: {_s(human_review.get('reviewed_at'))}."))
+        review_rows = [[_s(x.get("finding_id")), _s(x.get("decision")), _s(x.get("rationale"), 500), _s(x.get("amendment"), 500)]
+                       for x in human_review.get("decisions") or []]
+        if review_rows:
+            el.append(("table", ["Finding", "Decision", "Rationale", "Amendment"], review_rows,
+                       [0.16, 0.14, 0.38, 0.32]))
+
     worst = [i for i in items if any(x.get("severity") == "high" for x in i.get("issues") or [])][:3]
     if worst:
         el.append(("callout", "danger", "Fix these first", " ".join(
