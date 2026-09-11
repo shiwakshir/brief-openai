@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -118,6 +119,8 @@ def retrieve(query: str, max_subqueries: int = 4, instructions: str | None = Non
                         "title": " ".join((getattr(ann, "title", "") or "Source").split())[:120],
                         "url": _clean_url(getattr(ann, "url", "") or ""),
                         "snippet": snippet[:280],
+                        "retrieved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "review_status": "unverified",
                     })
     except Exception as e:
         log.warning("could not read grounding output: %s", e)
@@ -204,6 +207,7 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
                     "source": str(it.get("source", ""))[:160],
                     "url": _clean_url(str(it.get("url", ""))),
                     "year": str(it.get("year", ""))[:4],
+                    "review_status": "unverified",
                 })
             return out[:4]
         countries.append({
