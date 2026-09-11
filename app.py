@@ -181,6 +181,9 @@ def extract():
     upload = request.files.get("file")
     if not upload:
         return jsonify({"error": "No file received."}), 400
+    suffix = os.path.splitext(upload.filename or "")[1].lower()
+    if suffix not in config.ACTIVE_POLICY.allowed_uploads:
+        return jsonify({"error": "This file type is not permitted by the active data policy."}), 400
     try:
         data = upload.read(config.MAX_UPLOAD_BYTES + 1)
         if len(data) > config.MAX_UPLOAD_BYTES:
