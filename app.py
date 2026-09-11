@@ -37,6 +37,7 @@ from export import export_document
 from comparison import compare_reports
 from contracts import validate_review_decisions
 from review import build_findings
+from telemetry import metrics
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("brief.app")
@@ -105,13 +106,17 @@ def _start_background(session_id: str, work) -> None:
         })
 
     def run() -> None:
+        started = time.monotonic()
+        metrics.increment("jobs_started")
         try:
             report = work(on_progress)
             report["findings"] = build_findings(report)
             session.result = {"status": "done", "data": report}
+            metrics.observe_job(started, "completed")
         except Exception:
             log.exception("background run failed")
             session.result = {"status": "error", "message": "The analysis failed. Quote the job ID to support."}
+            metrics.observe_job(started, "failed")
         finally:
             job_slots.release()
 
@@ -295,6 +300,11 @@ def compare():
     if not isinstance(left, dict) or not isinstance(right, dict):
         return jsonify({"error": "Two report objects are required."}), 400
     return jsonify({"comparison": compare_reports(left, right)})
+
+
+@app.route("/metrics")
+def metric_status():
+    return jsonify(metrics.snapshot())
 
 
 @app.route("/policy")
