@@ -90,11 +90,11 @@ BRIEF is an advisory research quality-assurance assistant, not an automated appr
 
 ## How the indicators are calculated
 
-**Contamination scores are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it.
+**Model-convergence indicators are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it.
 
 **Evidence is grounded per hypothesis.** A reasoning model with web search returns structured findings for and against each hypothesis, per country, with verdict, source and year. These feed the drift, methodology, confidence and deliverables agents, so the front page can cite published sources.
 
-**The research-design review indicator assesses the brief, not the recommendation.** The confidence agent is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
+**The research-design review indicator assesses the brief, not the recommendation.** The review stage is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
 
 **The guide audit score** starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short instruments. It measures wording, not study design.
 
@@ -111,7 +111,7 @@ BRIEF is an advisory research quality-assurance assistant, not an automated appr
 
 ## Trying it
 
-Security regression tests are in `tests/test_security.py` and run in CI. The earlier README referred to an evaluation fixture set that was not committed; those claims have been removed until a reviewed, non-sensitive evaluation set is added.
+Security, policy, deterministic-rule, contract, export and adversarial regression tests are in `tests/` and run in CI. Synthetic cases live in `evals/`; they are smoke tests, not expert validation.
 
 Run the offline checks with:
 
@@ -157,9 +157,9 @@ Open `http://localhost:5000`.
 
 ## Testing
 
-**Offline unit tests** (no API key, under a second): `python -m unittest discover -s tests`. A fake model client exercises the plumbing: step order, key passing, fallbacks, scoring arithmetic, the confidence cap and label, quick mode, the audit counting rules, and the Word and PDF exporters.
+**Offline tests** (no API key): `pytest -q`. CI also compiles Python, checks browser JavaScript, audits dependencies, produces an SBOM, builds the container and smoke-tests liveness plus authenticated homepage access.
 
-**Evaluation status:** `evaluate.py` remains as a harness, but its historical `tests/briefs.json` fixture is not present in this repository. Do not treat model quality as regression-tested until a reviewed fixture is added and its score is enforced in CI.
+**Evaluation status:** checked-in synthetic cases verify deterministic and adversarial behaviour. Model quality remains unvalidated until a blinded, independently labelled expert benchmark is completed under `docs/ASSURANCE.md`.
 
 ---
 
@@ -235,9 +235,13 @@ A full brief analysis makes roughly 45 API calls; a guide audit makes three to f
 
 The application fails closed unless it receives a trusted identity from an organisational proxy, has an explicitly configured pilot password, or is running with the development-only insecure flag. Production should set `BRIEF_TRUST_AUTH_PROXY=true` behind an OIDC/identity-aware proxy that strips inbound copies of the identity header. The Basic password remains a small-pilot fallback, not production identity.
 
+### Researcher review workflow
+
+The researcher corrects extracted hypotheses before analysis. Each material finding then records its evidence class and requires an accept, reject or amend decision with a rationale. Consequential citations appear as unverified findings until checked. Word, PDF and JSON exports include attributed adjudication. Reports from different prompt versions are marked non-comparable.
+
 ### Configuration
 
-All settings are environment variables, read once at start by `config.py`. `.env.example` lists them. The two that matter for adoption:
+All settings are environment variables, read once at start by `config.py`. `.env.example` lists them. `BRIEF_POLICY_PROFILE` selects `public_synthetic`, `internal_confidential` or `regulated_zdr`; unsafe web/logging overrides fail startup. The two that matter for adoption:
 
 - `OPENAI_API_KEY`: use a key from an organisation-owned OpenAI account or project, not a personal one, so spend limits, data terms and revocation sit with the organisation.
 - `BRIEF_PASSWORD`: set it, or front the app with a proxy.
@@ -315,3 +319,12 @@ Still open: running the same brief over time to see how contamination drifts; co
 ## A note on purpose
 
 BRIEF was built for market research, but the same problem reaches anywhere people use AI to frame a question before investigating it: healthcare, public policy, financial inclusion. Wherever a study's starting assumptions quietly come from a model rather than the world, the findings risk confirming the model instead of the reality. Making those assumptions visible before the work begins is a small contribution to research integrity.
+
+
+## Assurance and operations
+
+- [Methodological assurance](docs/ASSURANCE.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Deployment baseline](docs/DEPLOYMENT.md)
+- [Operational runbook](docs/RUNBOOK.md)
+- [Verification and acceptance](docs/VERIFICATION.md)
