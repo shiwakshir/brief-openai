@@ -1,8 +1,11 @@
-"""Plain-text extraction from uploaded briefs and guides (PDF, DOCX, TXT, MD)."""
+"""Resource-bounded plain-text extraction from uploaded PDF, DOCX, TXT and MD files."""
 
 from __future__ import annotations
 
 import io
+import zipfile
+
+import config
 
 
 class UnsupportedFileType(ValueError):
@@ -10,11 +13,14 @@ class UnsupportedFileType(ValueError):
 
 
 def extract_text(filename: str, data: bytes) -> str:
-    """Return the readable text of an uploaded document, with blank lines collapsed."""
     name = (filename or "").lower()
     if name.endswith(".pdf"):
+        if not data.startswith(b"%PDF-"):
+            raise UnsupportedFileType("The file does not appear to be a PDF.")
         text = _from_pdf(data)
     elif name.endswith(".docx"):
+        if not data.startswith(b"PK"):
+            raise UnsupportedFileType("The file does not appear to be a DOCX document.")
         text = _from_docx(data)
     elif name.endswith((".txt", ".md")):
         text = data.decode("utf-8", errors="ignore")
@@ -26,12 +32,24 @@ def extract_text(filename: str, data: bytes) -> str:
 def _from_pdf(data: bytes) -> str:
     from pypdf import PdfReader
 
-    reader = PdfReader(io.BytesIO(data))
+    reader = PdfReader(io.BytesIO(data), strict=True)
+    if len(reader.pages) > config.MAX_PDF_PAGES:
+        raise ValueError(f"PDF exceeds the {config.MAX_PDF_PAGES}-page limit.")
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 def _from_docx(data: bytes) -> str:
     import docx
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            expanded = sum(item.file_size for item in archive.infolist())
+            if expanded > config.MAX_DOCX_EXPANDED_BYTES:
+                raise ValueError("DOCX expands beyond the configured safety limit.")
+            if any(item.file_size > 100 * max(item.compress_size, 1) for item in archive.infolist()):
+                raise ValueError("DOCX contains a suspiciously compressed component.")
+    except zipfile.BadZipFile as exc:
+        raise UnsupportedFileType("The DOCX file is invalid.") from exc
 
     document = docx.Document(io.BytesIO(data))
     parts = [paragraph.text for paragraph in document.paragraphs]
