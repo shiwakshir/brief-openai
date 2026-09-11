@@ -142,6 +142,8 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
     comp = data.get("competitor_intel") or {}
     dl = data.get("deliverables") or {}
     health = data.get("run_health") or {}
+    assurance = data.get("assurance") or {}
+    human_review = data.get("human_review") or {}
     clusters = data.get("clusters") or {}
     el: list[tuple] = []
 
@@ -366,6 +368,7 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
 def build_audit(data: dict[str, Any]) -> list[tuple]:
     sm = data.get("summary") or {}
     assurance = data.get("assurance") or {}
+    human_review = data.get("human_review") or {}
     items = data.get("items") or []
     cov = data.get("coverage") or {}
     el: list[tuple] = []
