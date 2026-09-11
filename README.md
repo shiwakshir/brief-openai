@@ -5,7 +5,7 @@
 
 ### Bias & Research Intelligence Evaluation Framework
 
-**Two tools for researchers: one audits what AI already assumes about a research brief before fieldwork begins; the other audits a discussion guide or questionnaire for questions that would confirm rather than test.**
+**An internal research-intelligence workspace with two tools: one audits what AI already assumes about a research brief before fieldwork begins; the other audits a discussion guide or questionnaire for questions that would confirm rather than test.**
 
 BRIEF was first built for the Microsoft Agents League hackathon (Reasoning Agents track) on Microsoft Foundry, where it won the Hack for Good award. This version runs on the OpenAI API only: one API key, no Azure subscription. It has since been extended well beyond the hackathon build; see "What changed since the hackathon" at the end.
 
@@ -38,6 +38,8 @@ Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF 
 - **Methodology**: whether to keep, adjust or change the method in the brief and what that costs, plus how to test each hypothesis and what finding should make the client drop it
 - **Paste-ready outputs**: a client challenge note, discussion guide probes per hypothesis, screener criteria, and in UX mode, usability task scenarios
 - **An appendix** of every AI answer the scores were computed from
+- **An internal workflow recommendation**: proceed to research planning, proceed after changes, or hold before fieldwork, with the deterministic reasons shown separately from the score
+- **Researcher sign-off**: accept, reject or amend material findings and record the rationale before relying on the result
 
 ### Tool 2: audit a guide or questionnaire
 
@@ -49,7 +51,19 @@ Paste or upload a discussion guide, interview script, survey or usability test p
 
 ### Exports
 
-Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: cover with score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, appendix of AI answers. Filenames carry the category and a timestamp.
+Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: internal recommendation and score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, and an appendix of AI answers. Filenames carry the category and a timestamp.
+
+### Interface
+
+The browser interface is designed as a supervised internal workspace rather than a client-facing report portal:
+
+- The landing page explains the three-step flow: confirm what BRIEF read, test the assumptions, then decide whether to proceed, revise or hold.
+- Brief and guide audits share one clearly separated tool switch, while Market research and UX research remain available within each workflow.
+- Results lead with the internal workflow recommendation, followed by its reasons, review status, assurance limitations and the underlying research-design indicator.
+- The full evidence trail, raw AI answers, paste-ready outputs and researcher sign-off remain available through the results navigation.
+- Light and dark themes, visible keyboard focus, labelled controls and responsive layouts support laptop, tablet and mobile use.
+
+The interface deliberately distinguishes **recommendation**, **score**, **evidence** and **human review**. A polished presentation does not make any of them validated truth.
 
 ---
 
@@ -104,8 +118,9 @@ BRIEF is an internal research quality-assurance assistant, not an external clien
 
 1. Choose the tool tab and the mode (Market or UX).
 2. Paste the text, or upload PDF, DOCX, TXT or MD. Clear empties the boxes.
-3. Brief audit only: click **Review hypotheses**, check what was read, edit the hypotheses, sample and fieldwork, then **Run the analysis**. Tick **Quick mode** for a one to two minute run with one model and no web evidence; use the full run (five to seven minutes) for anything a client will see.
-4. Read the report in the browser or export it. The header switches light and dark mode.
+3. Brief audit only: click **Review hypotheses**, check what was read, edit the hypotheses, sample and fieldwork, then **Run the analysis**. Tick **Quick mode** for a one to two minute run with one model and no web evidence; use the full run (five to seven minutes) before making an internal project decision.
+4. Start with the internal workflow recommendation and its reasons, then inspect the score, evidence trail, run-health warnings and source status.
+5. Complete researcher sign-off for material findings. Read the full report in the browser or export it; the header switches light and dark mode.
 
 ---
 
@@ -214,7 +229,7 @@ All dependencies are pure Python or ship wheels for Windows, macOS and Linux. No
 
 ### External services and network
 
-The only external service is the OpenAI API. Outbound HTTPS to `api.openai.com` on port 443 must be allowed. Nothing else is called: no analytics, no CDN, no fonts, no telemetry. If the organisation routes AI traffic through a gateway, set `OPENAI_BASE_URL` in the environment and the `openai` client will use it.
+The only application data service is the OpenAI API. Outbound HTTPS to `api.openai.com` on port 443 must be allowed. There are no analytics or telemetry services. The browser stylesheet currently loads Atkinson Hyperlegible and Space Mono from Google Fonts (`fonts.googleapis.com` and `fonts.gstatic.com`); organisations that prohibit external font requests should self-host those files or remove the import and use the configured fallbacks. If the organisation routes AI traffic through a gateway, set `OPENAI_BASE_URL` in the environment and the `openai` client will use it.
 
 Endpoints used:
 
@@ -237,7 +252,7 @@ The application fails closed unless it receives a trusted identity from an organ
 
 ### Researcher review workflow
 
-The researcher corrects extracted hypotheses before analysis. Each material finding then records its evidence class and requires an accept, reject or amend decision with a rationale. Consequential citations appear as unverified findings until checked. Word, PDF and JSON exports include attributed adjudication. Reports from different prompt versions are marked non-comparable.
+The researcher corrects extracted hypotheses before analysis. Results then open with an automatically generated internal workflow recommendation and the deterministic reasons behind it. Each material finding records its evidence class and requires an accept, reject or amend decision with a rationale. Human review changes the review status, not the computed recommendation. Consequential citations appear as unverified findings until checked. Word, PDF and Markdown exports include attributed adjudication. Reports from different prompt versions are marked non-comparable.
 
 ### Configuration
 
@@ -309,7 +324,8 @@ The hackathon build had eleven agents on Foundry, one probe model, a single grou
 - UX research mode
 - Paste-ready outputs: challenge note, probes, screener, task scenarios
 - The guide and questionnaire audit as a second tool
-- Word and PDF exports, light and dark mode
+- Word and PDF exports; a responsive, decision-led browser interface; light and dark themes; improved keyboard accessibility
+- Automatic internal workflow recommendations with explicit reasons, assurance limits and separate researcher sign-off status
 - Refactor into config, llm, agent, audit, grounding, documents, export and app modules; offline test suite; evaluation set
 
 Still open: running the same brief over time to see how contamination drifts; comparing predicted gaps against real fieldwork results, which is the only true test of whether the tool works.
