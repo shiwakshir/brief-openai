@@ -17,6 +17,7 @@ process memory, so the app must run as a single worker process.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -26,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context
 
 import config
 from agent import parse_brief, run_brief
@@ -37,7 +38,9 @@ from export import export_document
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("brief.app")
 
+config.validate_startup()
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +49,7 @@ app = Flask(__name__)
 
 @dataclass
 class Session:
+    owner: str
     created: float = field(default_factory=time.time)
     progress: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None
@@ -59,15 +63,20 @@ class SessionStore:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
 
-    def create(self) -> str:
+    def create(self, owner: str) -> str:
         self.expire()
-        session_id = os.urandom(8).hex()
+        session_id = os.urandom(16).hex()
         with self._lock:
-            self._sessions[session_id] = Session()
+            if len(self._sessions) >= config.MAX_SESSIONS:
+                raise RuntimeError("The service is at capacity; try again later.")
+            self._sessions[session_id] = Session(owner=owner)
         return session_id
 
-    def get(self, session_id: str) -> Session | None:
-        return self._sessions.get(session_id)
+    def get(self, session_id: str, owner: str) -> Session | None:
+        self.expire()
+        with self._lock:
+            session = self._sessions.get(session_id)
+            return session if session and hmac.compare_digest(session.owner, owner) else None
 
     def expire(self) -> None:
         now = time.time()
@@ -78,11 +87,12 @@ class SessionStore:
 
 
 sessions = SessionStore(config.SESSION_TTL_SECONDS)
+job_slots = threading.BoundedSemaphore(config.MAX_CONCURRENT_JOBS)
 
 
 def _start_background(session_id: str, work) -> None:
     """Run `work(on_progress)` in a thread and store its result on the session."""
-    session = sessions.get(session_id)
+    session = sessions.get(session_id, g.identity)
 
     def on_progress(step_name: str, step_number: int, total_steps: int) -> None:
         session.progress.append({
@@ -93,11 +103,13 @@ def _start_background(session_id: str, work) -> None:
     def run() -> None:
         try:
             session.result = {"status": "done", "data": work(on_progress)}
-        except Exception as exc:  # any agent failure must reach the user
+        except Exception:
             log.exception("background run failed")
-            session.result = {"status": "error", "message": str(exc)}
+            session.result = {"status": "error", "message": "The analysis failed. Quote the job ID to support."}
+        finally:
+            job_slots.release()
 
-    threading.Thread(target=run, daemon=True).start()
+    threading.Thread(target=run, daemon=True, name=f"brief-{session_id[:8]}").start()
 
 
 # ---------------------------------------------------------------------------
@@ -105,14 +117,36 @@ def _start_background(session_id: str, work) -> None:
 # ---------------------------------------------------------------------------
 
 @app.before_request
-def require_password():
-    """Optional shared password for hosted testing. Unset BRIEF_PASSWORD to run open."""
-    if not config.BRIEF_PASSWORD:
+def authenticate():
+    """Require an upstream identity or an explicitly configured development login."""
+    if request.path == "/health/live":
         return None
-    auth = request.authorization
-    if auth and auth.password == config.BRIEF_PASSWORD:
+    if config.TRUST_AUTH_PROXY:
+        identity = request.headers.get(config.AUTH_USER_HEADER, "").strip()
+        if not identity:
+            return jsonify({"error": "Authentication required."}), 401
+        g.identity = identity
         return None
-    return Response("Password required", 401, {"WWW-Authenticate": 'Basic realm="BRIEF"'})
+    if config.BRIEF_PASSWORD:
+        auth = request.authorization
+        if auth and hmac.compare_digest(auth.password or "", config.BRIEF_PASSWORD):
+            g.identity = auth.username or "shared-pilot-user"
+            return None
+        return Response("Password required", 401, {"WWW-Authenticate": 'Basic realm="BRIEF"'})
+    if config.ENVIRONMENT in {"development", "test"} and config.ALLOW_INSECURE_DEVELOPMENT:
+        g.identity = "local-development"
+        return None
+    return jsonify({"error": "Authentication is not configured."}), 503
+
+
+@app.after_request
+def security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'")
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -124,9 +158,16 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/health")
-def health():
+@app.route("/health/live")
+def health_live():
     return jsonify({"status": "ok"})
+
+
+@app.route("/health/ready")
+def health_ready():
+    if not config.OPENAI_API_KEY:
+        return jsonify({"status": "not_ready", "reason": "OpenAI is not configured"}), 503
+    return jsonify({"status": "ready"})
 
 
 @app.route("/extract", methods=["POST"])
@@ -135,7 +176,10 @@ def extract():
     if not upload:
         return jsonify({"error": "No file received."}), 400
     try:
-        text = extract_text(upload.filename or "", upload.read())
+        data = upload.read(config.MAX_UPLOAD_BYTES + 1)
+        if len(data) > config.MAX_UPLOAD_BYTES:
+            return jsonify({"error": "The uploaded file is too large."}), 413
+        text = extract_text(upload.filename or "", data)
     except UnsupportedFileType as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -175,7 +219,13 @@ def analyse():
     parsed_override = data.get("parsed") if isinstance(data.get("parsed"), dict) else None
     quick = bool(data.get("quick"))
 
-    session_id = sessions.create()
+    if not job_slots.acquire(blocking=False):
+        return jsonify({"error": "The service is at capacity; try again later."}), 429
+    try:
+        session_id = sessions.create(g.identity)
+    except RuntimeError as exc:
+        job_slots.release()
+        return jsonify({"error": str(exc)}), 429
     _start_background(session_id, lambda on_progress: run_brief(
         brief, progress_callback=on_progress, parsed_override=parsed_override, mode=mode, quick=quick,
     ))
@@ -192,7 +242,13 @@ def audit():
     brief = (data.get("brief") or "").strip()[:config.MAX_BRIEF_LENGTH]
     mode = (data.get("mode") or "market").lower()
 
-    session_id = sessions.create()
+    if not job_slots.acquire(blocking=False):
+        return jsonify({"error": "The service is at capacity; try again later."}), 429
+    try:
+        session_id = sessions.create(g.identity)
+    except RuntimeError as exc:
+        job_slots.release()
+        return jsonify({"error": str(exc)}), 429
     _start_background(session_id, lambda on_progress: run_audit(
         instrument, brief, mode, progress_callback=on_progress,
     ))
@@ -222,7 +278,7 @@ def export():
 @app.route("/progress/<session_id>")
 def progress(session_id: str):
     """Server-sent events: each progress step as it happens, then the result or a timeout."""
-    session = sessions.get(session_id)
+    session = sessions.get(session_id, g.identity)
     if session is None:
         return jsonify({"error": "Unknown session. It may have expired; start the analysis again."}), 404
 
