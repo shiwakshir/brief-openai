@@ -29,6 +29,15 @@ async function follow(sessionId) {
       } else if (data.type === "result") {
         source.close();
         if (data.status !== "done") return reject(new Error(data.message || "Analysis failed."));
+        const assurance = data.data.assurance || {};
+        const basis = assurance.evidence_basis || {};
+        byId("assurance").textContent = [
+          "Assurance: " + (assurance.assurance_level || "limited"),
+          assurance.metric_notice || "This output requires human review.",
+          "Evidence: " + (basis.probe_answers || 0) + " probe answers; " +
+            (basis.published_sources || 0) + " published sources."
+        ].join("\n");
+        byId("reviewed").checked = false;
         result.textContent = JSON.stringify(data.data, null, 2);
         output.hidden = false;
         showStatus("Complete.");
