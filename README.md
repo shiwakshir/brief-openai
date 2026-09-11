@@ -86,7 +86,7 @@ Each agent runs inside its own error recovery. If one fails it records the failu
 
 ## Methodological status
 
-BRIEF is an advisory research quality-assurance assistant, not an automated approval system. Its numerical outputs are heuristic review indicators, not validated measures of bias, contamination, truth, construct validity or likely project success. Every result includes its evidence basis, limitations and required human decisions. See [Methodological assurance](docs/ASSURANCE.md).
+BRIEF is an internal research quality-assurance assistant, not an external client deliverable or organisational approval system. It automatically recommends whether an internal project should proceed to research planning, proceed after changes, or pause before fieldwork. The recommendation follows deterministic quality gates; its numerical outputs remain heuristic review indicators, not validated measures of bias, contamination, truth, construct validity or likely project success. Every result includes its evidence basis, limitations and required human decisions. See [Methodological assurance](docs/ASSURANCE.md).
 
 ## How the indicators are calculated
 

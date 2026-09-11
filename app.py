@@ -37,6 +37,7 @@ from export import export_document
 from comparison import compare_reports
 from contracts import validate_review_decisions
 from review import build_findings
+from decision import internal_recommendation
 from telemetry import metrics
 from limits import SlidingWindowLimiter
 
@@ -322,6 +323,7 @@ def review_session(session_id: str):
     }
     session.review = review
     report["human_review"] = review
+    report["internal_recommendation"] = internal_recommendation(report)
     return jsonify({"review": review, "data": report})
 
 

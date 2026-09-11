@@ -143,6 +143,7 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
     dl = data.get("deliverables") or {}
     health = data.get("run_health") or {}
     assurance = data.get("assurance") or {}
+    internal = data.get("internal_recommendation") or {}
     human_review = data.get("human_review") or {}
     clusters = data.get("clusters") or {}
     el: list[tuple] = []
@@ -154,6 +155,12 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
     ]))
     el.append(("score", conf.get("confidence_score", "n/a"), _s(conf.get("confidence_label")),
                _score_colour(conf.get("confidence_score")), "Heuristic research-design review indicator, out of 100"))
+    if internal:
+        tone = "danger" if internal.get("decision") == "hold" else "amber" if internal.get("decision") == "proceed_with_changes" else "accent"
+        detail = _s(internal.get("recommended_action"), 500)
+        reasons = "; ".join(_s(x, 300) for x in internal.get("reasons") or [])
+        el.append(("callout", tone, f"Internal workflow recommendation: {_s(internal.get('label'))}",
+                   detail + (f" Reasons: {reasons}" if reasons else "") + f" {_s(internal.get('notice'), 500)}"))
     if conf.get("headline"):
         el.append(("callout", "neutral", "", _s(conf["headline"])))
     if conf.get("score_rationale"):
@@ -372,6 +379,7 @@ def build_audit(data: dict[str, Any]) -> list[tuple]:
     sm = data.get("summary") or {}
     assurance = data.get("assurance") or {}
     human_review = data.get("human_review") or {}
+    internal = data.get("internal_recommendation") or {}
     items = data.get("items") or []
     cov = data.get("coverage") or {}
     el: list[tuple] = []
@@ -379,6 +387,12 @@ def build_audit(data: dict[str, Any]) -> list[tuple]:
         f"{_s(data.get('instrument_type', 'instrument')).capitalize()}  ·  {sm.get('items_total', 0)} items  ·  {time.strftime('%d %B %Y')}",
     ]))
     el.append(("score", sm.get("score", "n/a"), _s(sm.get("label")), _score_colour(sm.get("score")), "Heuristic wording-review indicator, out of 100"))
+    if internal:
+        tone = "danger" if internal.get("decision") == "hold" else "amber" if internal.get("decision") == "proceed_with_changes" else "accent"
+        detail = _s(internal.get("recommended_action"), 500)
+        reasons = "; ".join(_s(x, 300) for x in internal.get("reasons") or [])
+        el.append(("callout", tone, f"Internal workflow recommendation: {_s(internal.get('label'))}",
+                   detail + (f" Reasons: {reasons}" if reasons else "") + f" {_s(internal.get('notice'), 500)}"))
     el.append(("p", f"{sm.get('items_flagged', 0)} of {sm.get('items_total', 0)} items flagged: {sm.get('high', 0)} high, "
                     f"{sm.get('medium', 0)} medium, {sm.get('low', 0)} low. {sm.get('items_confirming', 0)} restate a client hypothesis."))
     el.append(("small", "Score starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short "

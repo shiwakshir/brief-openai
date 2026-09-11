@@ -414,6 +414,7 @@ function renderAudit(a) {
       <div class="section-eyebrow">Instrument audit</div>
       <h2>Will this ${esc(a.instrument_type || 'instrument')} test the client's beliefs, or confirm them?</h2>
     </div>
+    ${renderInternalRecommendation(a.internal_recommendation)}
     ${renderAssurance(a.assurance, a.human_review)}
     <div class="confidence-hero">
       <div class="gauge">
@@ -474,6 +475,12 @@ function buildAuditMarkdown() {
   const a = auditData; if (!a) return '';
   const sm = a.summary || {};
   let md = '# BRIEF - Guide and questionnaire audit\n\n';
+  if (a.internal_recommendation) {
+    md += '## Internal workflow recommendation: ' + a.internal_recommendation.label + '\n\n';
+    md += a.internal_recommendation.recommended_action + '\n\n';
+    (a.internal_recommendation.reasons || []).forEach(reason => { md += '- ' + reason + '\n'; });
+    md += '\n_' + a.internal_recommendation.notice + '_\n\n';
+  }
   md += '## Score: ' + sm.score + '/100 (' + sm.label + ')\n\n' + sm.items_flagged + ' of ' + sm.items_total + ' items flagged: ' + sm.high + ' high, ' + sm.medium + ' medium, ' + sm.low + ' low. ' + sm.items_confirming + ' items restate a client hypothesis.\n\n';
   md += '## Question by question\n\n';
   (a.items || []).forEach(i => {
@@ -953,12 +960,24 @@ function renderAssurance(assurance, review) {
   const limitations = assurance.limitations || [];
   const reviewText = review && review.complete
     ? `Review complete · ${esc(review.reviewer || 'researcher')} · ${esc(review.reviewed_at || '')}`
-    : 'Researcher review required before client or fieldwork decisions';
+    : 'Researcher review required before an internal project or fieldwork decision';
   return `<div class="card card-mb-4 assurance-card">
     <div class="badge-row"><div class="card-label no-margin">Decision assurance</div><span class="badge-score ${scoreCls(level)}">${esc(level)}</span></div>
     <p>${esc(assurance.metric_notice || 'These outputs are advisory indicators and require researcher review.')}</p>
     <div class="assumption-quote">${reviewText}</div>
     ${limitations.map(item => `<div class="assumption-freq">· ${esc(item)}</div>`).join('')}
+  </div>`;
+}
+
+function renderInternalRecommendation(recommendation) {
+  if (!recommendation) return '';
+  const tone = recommendation.decision === 'proceed' ? 's-low' : recommendation.decision === 'hold' ? 's-high' : 's-medium';
+  const reasons = (recommendation.reasons || []).map(reason => `<li>${esc(reason)}</li>`).join('');
+  return `<div class="card card-mb-4 internal-decision-card">
+    <div class="badge-row"><div class="card-label no-margin">Internal workflow recommendation</div><span class="badge-score ${tone}">${esc(recommendation.label)}</span></div>
+    <p class="rec-heading">${esc(recommendation.recommended_action)}</p>
+    ${reasons ? `<ul class="deliv-text">${reasons}</ul>` : ''}
+    <div class="assumption-quote">${esc(recommendation.notice)} Status: ${esc(recommendation.review_status)}.</div>
   </div>`;
 }
 
@@ -1018,6 +1037,7 @@ function renderSummary(d) {
       <p>One read on whether this brief is set up to tell you something new, or just confirm what AI would have told the client anyway.</p>
     </div>
 
+    ${renderInternalRecommendation(d.internal_recommendation)}
     ${renderAssurance(d.assurance, d.human_review)}
 
     <div class="confidence-hero">
@@ -1083,6 +1103,12 @@ function buildReportMarkdown() {
   const p = d.parsed || {};
   let md = '';
   md += '# BRIEF - AI Contamination Report\n\n';
+  if (d.internal_recommendation) {
+    md += '## Internal workflow recommendation: ' + d.internal_recommendation.label + '\n\n';
+    md += d.internal_recommendation.recommended_action + '\n\n';
+    (d.internal_recommendation.reasons || []).forEach(reason => { md += '- ' + reason + '\n'; });
+    md += '\n_' + d.internal_recommendation.notice + '_\n\n';
+  }
   md += '## Research Design Confidence: ' + (c.confidence_score != null ? c.confidence_score : 'n/a') + '/100 (' + (c.confidence_label || '') + ')\n\n';
   md += '> ' + (c.headline || '') + '\n\n';
   md += (c.score_rationale || '') + '\n\n';

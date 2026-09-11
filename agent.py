@@ -20,6 +20,7 @@ import config
 import web_grounding
 from credibility import brief_assurance
 from contracts import validate_report
+from decision import internal_recommendation
 from provenance import report_provenance
 from llm import call_json, call_model, current_run_dir, log_step, start_run_log
 
@@ -1218,5 +1219,6 @@ def run_brief(
         )
         assurance["assurance_level"] = "limited"
         result["assurance"] = assurance
+    result["internal_recommendation"] = internal_recommendation(result)
     result["provenance"] = report_provenance(result)
     return result

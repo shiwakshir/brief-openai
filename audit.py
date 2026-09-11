@@ -20,6 +20,7 @@ from typing import Any
 
 import config
 from credibility import audit_assurance
+from decision import internal_recommendation
 from agent import UX_MODE_NOTE, parse_brief
 from llm import call_json, log_step, start_run_log
 from rules import audit_instrument
@@ -263,5 +264,6 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
         },
     }
     result["assurance"] = audit_assurance(result, config.PROMPT_VERSION)
+    result["internal_recommendation"] = internal_recommendation(result)
     log_step("D_audit_result", result)
     return result

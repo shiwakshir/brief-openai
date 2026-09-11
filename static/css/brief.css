@@ -1288,6 +1288,7 @@
 .s-neutral { background: var(--surface); color: var(--muted); border: 1px solid var(--border2); }
 .score-fill.neutral { background: var(--muted); }
 .assurance-card { border-color: var(--accent-border); }
+.internal-decision-card { border-width: 2px; }
 .review-decision-grid { grid-template-columns: minmax(150px, .45fr) minmax(260px, 1.55fr); }
 .review-finding textarea { resize: vertical; }
 .review-finding select { min-height: 38px; }

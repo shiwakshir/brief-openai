@@ -2,7 +2,7 @@
 
 ## Intended use
 
-BRIEF is an advisory research quality-assurance assistant. It helps a qualified researcher identify assumptions, wording risks, sample mismatches and questions that warrant review. It does not establish truth, diagnose bias objectively, replace ethics review, or approve a research design.
+BRIEF is an internal research quality-assurance assistant. It helps a qualified researcher identify assumptions, wording risks, sample mismatches and questions that warrant review. It also generates an internal workflow recommendation: proceed to research planning, proceed after changes, or hold before fieldwork. That recommendation is not organisational authorisation. BRIEF does not establish truth, diagnose bias objectively, replace ethics review, or approve a research design.
 
 ## Evidence classes
 
