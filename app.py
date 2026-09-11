@@ -88,7 +88,7 @@ class SessionStore:
     def expire(self) -> None:
         now = time.time()
         with self._lock:
-            stale = [sid for sid, s in self._sessions.items() if now - s.created > self._ttl]
+            stale = [\n                sid for sid, s in self._sessions.items()\n                if s.result is not None and now - s.created > self._ttl\n            ]
             for sid in stale:
                 self._sessions.pop(sid, None)
 
