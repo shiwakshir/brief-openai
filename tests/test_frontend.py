@@ -18,6 +18,8 @@ def test_full_research_workflow_is_present_on_homepage():
     ):
         assert f'id="{element_id}"' in html
     assert "Reviewer sign-off" in html
+    assert 'role="tab" aria-selected="true" aria-controls="brief-section"' in html
+    assert 'role="tabpanel" aria-labelledby="tool-brief"' in html
     assert "onclick=" not in html
     assert "onchange=" not in html
 
@@ -32,6 +34,8 @@ def test_frontend_uses_csp_safe_external_event_wiring():
     assert "function renderDeliverables" in javascript
     assert "function renderEvidence" in javascript
     assert "function renderInternalRecommendation" in javascript
+    assert "setAttribute('aria-selected'" in javascript
+    assert "setAttribute('aria-pressed'" in javascript
     assert "function safeUrl" in javascript
     assert "p.topic = document.getElementById('rv-topic')" in javascript
 

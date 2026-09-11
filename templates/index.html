@@ -26,21 +26,37 @@
   <div id="landing">
 
     <div class="hero">
-      <div class="hero-eyebrow">Pre-fieldwork intelligence</div>
-      <h1>Your client's brief is already<br><em>contaminated.</em><br>Find out how.</h1>
-      <p class="hero-body">Paste a market research or UX research brief, or upload the RFP, email thread or kick-off deck. BRIEF shows what AI already assumes about your topic, measures which client hypotheses are AI consensus repeated back, checks them against published evidence, and drafts the challenge note, probes and screener you need before fieldwork.</p>
+      <div class="hero-copy">
+        <div class="hero-eyebrow"><span class="status-dot" aria-hidden="true"></span> Internal research intelligence</div>
+        <h1>Challenge the assumptions<br><em>before fieldwork.</em></h1>
+        <p class="hero-body">Turn a research brief, RFP or discussion guide into a clear internal read on AI-shaped assumptions, evidence gaps and the changes worth making before the study begins.</p>
+        <div class="hero-proof" aria-label="What BRIEF provides">
+          <span>Hypothesis checks</span>
+          <span>Evidence trace</span>
+          <span>Research recommendation</span>
+        </div>
+      </div>
+      <aside class="hero-preview" aria-label="BRIEF workflow preview">
+        <div class="preview-kicker">From brief to decision</div>
+        <ol class="preview-steps">
+          <li><span class="preview-num">01</span><div><strong>Read the brief</strong><small>Confirm the hypotheses BRIEF found</small></div></li>
+          <li><span class="preview-num">02</span><div><strong>Test the assumptions</strong><small>Separate model consensus from evidence</small></div></li>
+          <li><span class="preview-num">03</span><div><strong>Act with context</strong><small>Proceed, revise or hold for review</small></div></li>
+        </ol>
+        <div class="preview-note"><span aria-hidden="true">✓</span> Designed for supervised internal use</div>
+      </aside>
     </div>
 
-    <div class="tool-switch" role="tablist">
-      <button type="button" class="tool-tab active" id="tool-brief" data-action="set-tool" data-tool="brief">Audit a brief</button>
-      <button type="button" class="tool-tab" id="tool-guide" data-action="set-tool" data-tool="guide">Audit a guide or questionnaire</button>
+    <div class="tool-switch" role="tablist" aria-label="Choose an analysis">
+      <button type="button" role="tab" aria-selected="true" aria-controls="brief-section" class="tool-tab active" id="tool-brief" data-action="set-tool" data-tool="brief">Audit a brief</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="guide-section" class="tool-tab" id="tool-guide" data-action="set-tool" data-tool="guide">Audit a guide or questionnaire</button>
     </div>
 
-    <div class="input-section" id="guide-section" style="display:none">
+    <div class="input-section" id="guide-section" role="tabpanel" aria-labelledby="tool-guide" style="display:none">
       <div class="input-toolbar">
         <label class="input-label" for="guide-input">Discussion guide, script, survey or test plan</label>
         <div class="toolbar-right">
-          <div class="mode-toggle" role="radiogroup" aria-label="Research mode">
+          <div class="mode-toggle" role="group" aria-label="Research mode">
             <button type="button" class="mode-btn active" id="gmode-market" data-action="set-mode" data-mode="market">Market research</button>
             <button type="button" class="mode-btn" id="gmode-ux" data-action="set-mode" data-mode="ux">UX research</button>
           </div>
@@ -62,11 +78,11 @@
       </div>
     </div>
 
-    <div class="input-section" id="brief-section">
+    <div class="input-section" id="brief-section" role="tabpanel" aria-labelledby="tool-brief">
       <div class="input-toolbar">
         <label class="input-label" for="brief-input">Research brief</label>
         <div class="toolbar-right">
-          <div class="mode-toggle" role="radiogroup" aria-label="Research mode">
+          <div class="mode-toggle" role="group" aria-label="Research mode">
             <button type="button" class="mode-btn active" id="mode-market" data-action="set-mode" data-mode="market">Market research</button>
             <button type="button" class="mode-btn" id="mode-ux" data-action="set-mode" data-mode="ux">UX research</button>
           </div>
@@ -102,7 +118,7 @@
         <button type="button" class="btn-new" data-action="add-hypothesis">+ Add a hypothesis</button>
         <div class="input-footer" style="margin-top:var(--sp-4)">
           <label class="input-hint" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="quick-mode"> Quick mode: one AI model, no web evidence, 1-2 minutes. Use for triage; run the full version for anything you will show a client.
+            <input type="checkbox" id="quick-mode"> Quick mode: one AI model, no web evidence, 1-2 minutes. Use for triage; run the full version before making an internal project decision.
           </label>
           <button class="btn-run" id="confirm-btn" data-action="run-analysis">Run the analysis &nbsp;&#9654;</button>
         </div>

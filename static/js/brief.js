@@ -120,8 +120,14 @@ let auditData = null;
 
 function setMode(m) {
   researchMode = m;
-  ['mode-market', 'gmode-market'].forEach(id => document.getElementById(id).classList.toggle('active', m === 'market'));
-  ['mode-ux', 'gmode-ux'].forEach(id => document.getElementById(id).classList.toggle('active', m === 'ux'));
+  ['mode-market', 'gmode-market'].forEach(id => {
+    document.getElementById(id).classList.toggle('active', m === 'market');
+    document.getElementById(id).setAttribute('aria-pressed', String(m === 'market'));
+  });
+  ['mode-ux', 'gmode-ux'].forEach(id => {
+    document.getElementById(id).classList.toggle('active', m === 'ux');
+    document.getElementById(id).setAttribute('aria-pressed', String(m === 'ux'));
+  });
   document.getElementById('rv-product-wrap').style.display = m === 'ux' ? 'block' : 'none';
 }
 
@@ -146,6 +152,8 @@ function setTool(t) {
   currentTool = t;
   document.getElementById('tool-brief').classList.toggle('active', t === 'brief');
   document.getElementById('tool-guide').classList.toggle('active', t === 'guide');
+  document.getElementById('tool-brief').setAttribute('aria-selected', String(t === 'brief'));
+  document.getElementById('tool-guide').setAttribute('aria-selected', String(t === 'guide'));
   document.getElementById('brief-section').style.display = t === 'brief' ? 'block' : 'none';
   document.getElementById('guide-section').style.display = t === 'guide' ? 'block' : 'none';
   document.getElementById('review-section').style.display = 'none';
@@ -972,12 +980,15 @@ function renderAssurance(assurance, review) {
 function renderInternalRecommendation(recommendation) {
   if (!recommendation) return '';
   const tone = recommendation.decision === 'proceed' ? 's-low' : recommendation.decision === 'hold' ? 's-high' : 's-medium';
+  const state = recommendation.decision === 'proceed' ? 'proceed' : recommendation.decision === 'hold' ? 'hold' : 'change';
   const reasons = (recommendation.reasons || []).map(reason => `<li>${esc(reason)}</li>`).join('');
-  return `<div class="card card-mb-4 internal-decision-card">
-    <div class="badge-row"><div class="card-label no-margin">Internal workflow recommendation</div><span class="badge-score ${tone}">${esc(recommendation.label)}</span></div>
-    <p class="rec-heading">${esc(recommendation.recommended_action)}</p>
-    ${reasons ? `<ul class="deliv-text">${reasons}</ul>` : ''}
-    <div class="assumption-quote">${esc(recommendation.notice)} Status: ${esc(recommendation.review_status)}.</div>
+  return `<div class="card card-mb-4 internal-decision-card decision-${state}">
+    <div class="decision-header">
+      <div><div class="card-label no-margin">Internal workflow recommendation</div><p class="rec-heading">${esc(recommendation.recommended_action)}</p></div>
+      <span class="badge-score ${tone}">${esc(recommendation.label)}</span>
+    </div>
+    ${reasons ? `<div class="decision-reasons"><div class="decision-reasons-label">Why</div><ul>${reasons}</ul></div>` : ''}
+    <div class="decision-notice">${esc(recommendation.notice)} <span>Status: ${esc(recommendation.review_status)}.</span></div>
   </div>`;
 }
 
