@@ -6,6 +6,8 @@ from contracts import validate_report, validate_review_decisions
 from policy import enforce, get_policy
 from rules import audit_instrument, check_item
 from limits import SlidingWindowLimiter
+from provenance import report_provenance
+from review import build_findings
 
 
 def auth(user):
@@ -101,3 +103,44 @@ def test_per_user_rate_limit_isolated_by_identity():
     assert not limiter.allow("alice", now=102)
     assert limiter.allow("bob", now=102)
     assert limiter.allow("alice", now=4001)
+
+
+def test_active_session_is_not_expired_mid_job():
+    store = app_module.SessionStore(ttl_seconds=1)
+    session_id = store.create("alice")
+    session = store.get(session_id, "alice")
+    session.created = 0
+    store.expire()
+    assert store.get(session_id, "alice") is session
+    session.result = {"status": "done", "data": {}}
+    store.expire()
+    assert store.get(session_id, "alice") is None
+
+
+def test_cancellation_is_owned_and_cooperative():
+    session_id = app_module.sessions.create("alice")
+    client = app_module.app.test_client()
+    denied = client.post(f"/cancel/{session_id}", headers=auth("bob"))
+    assert denied.status_code == 404
+    accepted = client.post(f"/cancel/{session_id}", headers=auth("alice"))
+    assert accepted.status_code == 200
+    assert app_module.sessions.get(session_id, "alice").cancelled.is_set()
+
+
+def test_findings_cover_citations_and_instrument_issues():
+    findings = build_findings({
+        "archaeology": {"sources": [{"title": "Study", "url": "https://example.org/study"}]},
+        "items": [{"id": "Q1", "text": "How easy and useful?", "issues": [
+            {"explanation": "Double-barrelled wording."}
+        ]}],
+    })
+    assert {item["category"] for item in findings} == {
+        "citation_verification", "instrument_wording"
+    }
+    assert all(item["required_action"] for item in findings)
+
+
+def test_provenance_only_describes_present_sections():
+    result = report_provenance({"parsed": {}, "confidence": {}, "unexpected": {}})
+    assert set(result) == {"parsed", "confidence"}
+    assert result["confidence"]["evidence_class"] == "heuristic_indicator"
