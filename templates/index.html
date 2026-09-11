@@ -3,48 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>BRIEF</title>
+  <title>BRIEF · Research quality assurance</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/brief.css') }}">
   <script src="{{ url_for('static', filename='js/brief.js') }}" defer></script>
 </head>
 <body>
-  <main>
-    <header>
-      <p class="eyebrow">Bias &amp; Research Intelligence Evaluation Framework</p>
-      <h1>BRIEF</h1>
-      <p>Review research assumptions before fieldwork begins.</p>
-    </header>
+<main>
+  <header>
+    <p class="eyebrow">Advisory research quality assurance</p>
+    <h1>BRIEF</h1>
+    <p>Find assumptions, evidence gaps and instrument risks before fieldwork. Every material finding requires researcher review.</p>
+  </header>
 
-    <section class="panel">
-      <label for="mode">Research mode</label>
-      <select id="mode"><option value="market">Market research</option><option value="ux">UX research</option></select>
+  <section class="panel" aria-labelledby="brief-heading">
+    <h2 id="brief-heading">1. Supply the brief</h2>
+    <label for="mode">Research mode</label>
+    <select id="mode"><option value="market">Market research</option><option value="ux">UX research</option></select>
+    <label for="file">Upload an allowed document (optional)</label>
+    <input id="file" type="file" accept=".pdf,.docx,.txt,.md">
+    <label for="brief">Research brief</label>
+    <textarea id="brief" rows="12" maxlength="24000" placeholder="Paste the brief here"></textarea>
+    <div class="actions">
+      <button id="parse" type="button" class="secondary">Review extracted hypotheses</button>
+    </div>
 
-      <label for="file">Upload PDF, DOCX, TXT or Markdown (optional)</label>
-      <input id="file" type="file" accept=".pdf,.docx,.txt,.md">
+    <fieldset id="hypothesis-review" hidden>
+      <legend>Researcher correction</legend>
+      <p class="hint">Correct the extraction before analysis. One hypothesis per line.</p>
+      <label for="category">Category or product</label><input id="category" type="text">
+      <label for="audience">Target audience</label><input id="audience" type="text">
+      <label for="geography">Geography</label><input id="geography" type="text">
+      <label for="sample">Recruitment sample</label><input id="sample" type="text">
+      <label for="fieldwork">Fieldwork locations</label><input id="fieldwork" type="text">
+      <label for="hypotheses">Client hypotheses</label><textarea id="hypotheses" rows="6"></textarea>
+    </fieldset>
 
-      <label for="brief">Research brief</label>
-      <textarea id="brief" rows="14" maxlength="24000" placeholder="Paste the research brief here"></textarea>
+    <label class="inline"><input id="quick" type="checkbox" checked> Quick mode — limited assurance, no published-web evidence</label>
+    <button id="analyse" type="button">Run advisory review</button>
+  </section>
 
-      <label class="inline"><input id="quick" type="checkbox" checked> Quick mode</label>
-      <div class="actions">
-        <button id="analyse" type="button">Run brief analysis</button>
-      </div>
-    </section>
+  <section class="panel" aria-labelledby="audit-heading">
+    <h2 id="audit-heading">2. Audit an instrument</h2>
+    <label for="instrument">Discussion guide, questionnaire or usability plan</label>
+    <textarea id="instrument" rows="10" maxlength="40000" placeholder="Paste the instrument here"></textarea>
+    <button id="audit" type="button">Audit instrument</button>
+  </section>
 
-    <section class="panel">
-      <h2>Guide or questionnaire audit</h2>
-      <label for="instrument">Instrument</label>
-      <textarea id="instrument" rows="10" maxlength="40000" placeholder="Paste the discussion guide, questionnaire or test plan"></textarea>
-      <button id="audit" type="button">Audit instrument</button>
-    </section>
+  <section id="status" class="panel" aria-live="polite" hidden></section>
 
-    <section id="status" class="panel" aria-live="polite" hidden></section>
-    <section id="output" class="panel" hidden>
-      <h2>Advisory research QA result</h2>
-      <div id="assurance"></div>
-      <label class="inline"><input id="reviewed" type="checkbox"> I have reviewed the limitations and will verify material findings before use.</label>
-      <pre id="result"></pre>
-    </section>
-  </main>
+  <section id="output" class="panel" hidden>
+    <h2>3. Review the findings</h2>
+    <div id="assurance" class="assurance"></div>
+    <div id="findings"></div>
+    <button id="submit-review" type="button">Record reviewer decisions</button>
+    <p id="review-state" class="hint" aria-live="polite"></p>
+    <div class="actions">
+      <button id="export-docx" type="button" class="secondary">Export Word</button>
+      <button id="export-pdf" type="button" class="secondary">Export PDF</button>
+      <button id="download-json" type="button" class="secondary">Download review JSON</button>
+    </div>
+    <details><summary>Technical result and provenance</summary><pre id="result"></pre></details>
+  </section>
+</main>
 </body>
 </html>
