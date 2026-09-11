@@ -18,6 +18,8 @@ def test_full_research_workflow_is_present_on_homepage():
     ):
         assert f'id="{element_id}"' in html
     assert "Reviewer sign-off" in html
+    assert "Review a brief before fieldwork." in html
+    assert "Internal tool" in html
     assert 'role="tab" aria-selected="true" aria-controls="brief-section"' in html
     assert 'role="tabpanel" aria-labelledby="tool-brief"' in html
     assert "onclick=" not in html
@@ -53,3 +55,9 @@ def test_csp_blocks_inline_scripts_but_allows_presentational_inline_styles():
     assert "script-src 'self'" in csp
     assert "script-src 'self' 'unsafe-inline'" not in csp
     assert "style-src 'self' 'unsafe-inline'" in csp
+
+
+def test_frontend_does_not_load_external_fonts():
+    stylesheet = (ROOT / "static" / "css" / "brief.css").read_text(encoding="utf-8")
+    assert "fonts.googleapis.com" not in stylesheet
+    assert "fonts.gstatic.com" not in stylesheet

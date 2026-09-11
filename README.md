@@ -57,7 +57,7 @@ Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed docume
 
 The browser interface is designed as a supervised internal workspace rather than a client-facing report portal:
 
-- The landing page explains the three-step flow: confirm what BRIEF read, test the assumptions, then decide whether to proceed, revise or hold.
+- The landing page states the internal quality-assurance purpose plainly and moves directly into the chosen audit workflow.
 - Brief and guide audits share one clearly separated tool switch, while Market research and UX research remain available within each workflow.
 - Results lead with the internal workflow recommendation, followed by its reasons, review status, assurance limitations and the underlying research-design indicator.
 - The full evidence trail, raw AI answers, paste-ready outputs and researcher sign-off remain available through the results navigation.
@@ -155,7 +155,7 @@ Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Then:
 python app.py
 ```
 
-Open `http://localhost:5000`.
+Open `http://brief.localhost:5000`. If that name is not recognised by a managed browser or network policy, `http://localhost:5000` remains the fallback.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -229,7 +229,7 @@ All dependencies are pure Python or ship wheels for Windows, macOS and Linux. No
 
 ### External services and network
 
-The only application data service is the OpenAI API. Outbound HTTPS to `api.openai.com` on port 443 must be allowed. There are no analytics or telemetry services. The browser stylesheet currently loads Atkinson Hyperlegible and Space Mono from Google Fonts (`fonts.googleapis.com` and `fonts.gstatic.com`); organisations that prohibit external font requests should self-host those files or remove the import and use the configured fallbacks. If the organisation routes AI traffic through a gateway, set `OPENAI_BASE_URL` in the environment and the `openai` client will use it.
+The only external service is the OpenAI API. Outbound HTTPS to `api.openai.com` on port 443 must be allowed. There are no analytics, telemetry, CDN or external font requests; the interface uses system fonts already installed on the user's device. If the organisation routes AI traffic through a gateway, set `OPENAI_BASE_URL` in the environment and the `openai` client will use it.
 
 Endpoints used:
 
