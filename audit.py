@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import config
+from credibility import audit_assurance
 from agent import UX_MODE_NOTE, parse_brief
 from llm import call_json, log_step, start_run_log
 
@@ -250,5 +251,6 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
             "confirmed_only_hypotheses": [h.get("hypothesis") for h in coverage.get("hypotheses", []) if h.get("coverage") == "confirmed_only"],
         },
     }
+    result["assurance"] = audit_assurance(result, config.PROMPT_VERSION)
     log_step("D_audit_result", result)
     return result
