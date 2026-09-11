@@ -18,6 +18,8 @@ from typing import Any, Callable
 import config
 import web_grounding
 from credibility import brief_assurance
+from contracts import validate_report
+from provenance import report_provenance
 from llm import call_json, call_model, current_run_dir, log_step, start_run_log
 
 log = logging.getLogger("brief.agent")
@@ -1028,7 +1030,7 @@ def run_brief(
         confidence=confidence,
     )
 
-    return {
+    result = {
         "assurance": assurance,
         "run_health": run_health,
         "parsed": parsed,
@@ -1043,5 +1045,19 @@ def run_brief(
         "archaeology": archaeology,
         "methodology": methodology,
         "confidence": confidence,
-        "deliverables": deliverables
+        "deliverables": deliverables,
     }
+    contract_errors = validate_report(result)
+    if contract_errors:
+        run_health["status"] = "invalid"
+        run_health["contract_errors"] = contract_errors
+        assurance = brief_assurance(
+            run_health=run_health,
+            convergence=convergence,
+            archaeology=archaeology,
+            confidence=confidence,
+        )
+        assurance["assurance_level"] = "limited"
+        result["assurance"] = assurance
+    result["provenance"] = report_provenance(result)
+    return result
