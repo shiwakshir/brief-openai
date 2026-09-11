@@ -22,6 +22,7 @@ import config
 from credibility import audit_assurance
 from agent import UX_MODE_NOTE, parse_brief
 from llm import call_json, log_step, start_run_log
+from rules import audit_instrument
 
 log = logging.getLogger("brief.audit")
 
@@ -208,13 +209,23 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
     progress("Checking coverage of the client hypotheses", 4)
     coverage = assess_coverage(items, parsed_brief, audited, mode) if items else {"hypotheses": [], "missing_questions": []}
 
-    # Merge and score
+    # Merge model judgements with deterministic, versioned rules.
+    rules_by_id = audit_instrument(items)
     merged = []
     counts = {"high": 0, "medium": 0, "low": 0}
     confirms = 0
     for it in items:
         a = audited.get(it["id"], {})
-        issues = [i for i in a.get("issues", []) if isinstance(i, dict) and i.get("type")]
+        model_issues = [dict(i, source=i.get("source", "model_judgement"))
+                        for i in a.get("issues", []) if isinstance(i, dict) and i.get("type")]
+        rule_issues = rules_by_id.get(it["id"], [])
+        seen = set()
+        issues = []
+        for issue in model_issues + rule_issues:
+            key = (issue.get("type"), issue.get("rule_id"), issue.get("explanation"))
+            if key not in seen:
+                seen.add(key)
+                issues.append(issue)
         for i in issues:
             sev = str(i.get("severity", "low")).lower()
             counts[sev if sev in counts else "low"] += 1
