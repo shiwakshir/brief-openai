@@ -5,6 +5,7 @@ from comparison import compare_reports
 from contracts import validate_report, validate_review_decisions
 from policy import enforce, get_policy
 from rules import audit_instrument, check_item
+from limits import SlidingWindowLimiter
 
 
 def auth(user):
@@ -91,3 +92,12 @@ def test_policy_endpoint_exposes_non_secret_controls():
     response = app_module.app.test_client().get("/policy", headers=auth("alice"))
     assert response.status_code == 200
     assert response.get_json()["name"] == "internal_confidential"
+
+
+def test_per_user_rate_limit_isolated_by_identity():
+    limiter = SlidingWindowLimiter(2, 3600)
+    assert limiter.allow("alice", now=100)
+    assert limiter.allow("alice", now=101)
+    assert not limiter.allow("alice", now=102)
+    assert limiter.allow("bob", now=102)
+    assert limiter.allow("alice", now=4001)
