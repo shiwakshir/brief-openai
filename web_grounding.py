@@ -58,6 +58,9 @@ def _clean_prose(text: str) -> str:
 
 
 def is_configured() -> bool:
+    if not config.ENABLE_WEB_GROUNDING:
+        log.info("Web grounding is disabled by policy.")
+        return False
     if not config.OPENAI_API_KEY:
         log.warning("OPENAI_API_KEY is missing; web grounding disabled.")
         return False
@@ -83,6 +86,7 @@ def retrieve(query: str, max_subqueries: int = 4, instructions: str | None = Non
             tools=[{"type": "web_search"}],
             instructions=instructions,
             input=query,
+            store=False,
         )
     except Exception as e:
         log.warning("grounding call failed: %s: %s", type(e).__name__, e)
