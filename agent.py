@@ -1010,6 +1010,8 @@ def run_brief(
         if isinstance(obj, dict) and obj.get("_error"):
             step_errors.append({"step": name, "error": str(obj["_error"])[:300]})
     run_health = {
+        "status": "degraded" if step_errors else "complete",
+        "prompt_version": config.PROMPT_VERSION,
         "quick_mode": bool(quick),
         "probe_models": probe_models,
         "answers_collected": len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", [])),
