@@ -24,7 +24,7 @@ class Metrics:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            completed = self._counts["jobs_completed"] + self._counts["jobs_failed"]
+            completed = sum(self._counts[f"jobs_{status}"] for status in ("completed", "failed", "cancelled"))
             return {
                 "counts": dict(self._counts),
                 "job_duration_seconds_total": round(self._duration_total, 3),
