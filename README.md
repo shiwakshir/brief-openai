@@ -50,11 +50,6 @@ Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed docume
 
 ---
 
-## Architecture
-
-![BRIEF architecture diagram](architecture.png)
-
-*The diagram is from the hackathon build and shows the Foundry deployment; the agent chain below is current.*
 
 An orchestrator (`run_brief` in `agent.py`) passes state through twelve agents. Each has one job, its own instructions and a JSON output contract that is checked before the next agent runs.
 
