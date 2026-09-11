@@ -146,16 +146,29 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
     el: list[tuple] = []
 
     mode = "UX research" if parsed.get("research_mode") == "ux" else "Market research"
-    el.append(("title", "AI contamination report", [
+    el.append(("title", "Research quality-assurance review", [
         _s(parsed.get("core_question") or parsed.get("research_objective"), 220),
         f"{mode}  ·  {time.strftime('%d %B %Y')}",
     ]))
     el.append(("score", conf.get("confidence_score", "n/a"), _s(conf.get("confidence_label")),
-               _score_colour(conf.get("confidence_score")), "Research design confidence, out of 100"))
+               _score_colour(conf.get("confidence_score")), "Heuristic research-design review indicator, out of 100"))
     if conf.get("headline"):
         el.append(("callout", "neutral", "", _s(conf["headline"])))
     if conf.get("score_rationale"):
         el.append(("p", _s(conf["score_rationale"])))
+    if assurance:
+        notice = _s(assurance.get("metric_notice"), 500)
+        level = _s(assurance.get("assurance_level") or "limited").capitalize()
+        el.append(("callout", "amber", f"{level} assurance · human review required", notice))
+        limitations = [_s(x, 400) for x in assurance.get("limitations", []) if _s(x)]
+        if limitations:
+            el.append(("h", 3, "Limitations"))
+            el.append(("bullets", limitations))
+        decisions = [_s(x, 400) for x in assurance.get("required_reviewer_decisions", []) if _s(x)]
+        if decisions:
+            el.append(("h", 3, "Reviewer sign-off"))
+            el.append(("numbered", decisions))
+
     if health.get("quick_mode") or health.get("step_errors"):
         note = "Quick mode: one AI model, no web evidence. Scores are indicative. " if health.get("quick_mode") else ""
         if health.get("step_errors"):
@@ -349,7 +362,7 @@ def build_audit(data: dict[str, Any]) -> list[tuple]:
     el.append(("title", "Guide and questionnaire audit", [
         f"{_s(data.get('instrument_type', 'instrument')).capitalize()}  ·  {sm.get('items_total', 0)} items  ·  {time.strftime('%d %B %Y')}",
     ]))
-    el.append(("score", sm.get("score", "n/a"), _s(sm.get("label")), _score_colour(sm.get("score")), "Wording score, out of 100"))
+    el.append(("score", sm.get("score", "n/a"), _s(sm.get("label")), _score_colour(sm.get("score")), "Heuristic wording-review indicator, out of 100"))
     el.append(("p", f"{sm.get('items_flagged', 0)} of {sm.get('items_total', 0)} items flagged: {sm.get('high', 0)} high, "
                     f"{sm.get('medium', 0)} medium, {sm.get('low', 0)} low. {sm.get('items_confirming', 0)} restate a client hypothesis."))
     el.append(("small", "Score starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short "
@@ -742,7 +755,7 @@ def export_document(kind: str, data: dict[str, Any], fmt: str) -> tuple[bytes, s
     if kind == "audit":
         elements, title = build_audit(data), "BRIEF guide and questionnaire audit"
     else:
-        elements, title = build_report(data), "BRIEF AI contamination report"
+        elements, title = build_report(data), "BRIEF research quality-assurance review"
     if fmt == "pdf":
         return render_pdf(elements, title), "application/pdf", "pdf"
     if fmt == "docx":
