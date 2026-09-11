@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 import config
 import web_grounding
+from credibility import brief_assurance
 from llm import call_json, call_model, current_run_dir, log_step, start_run_log
 
 log = logging.getLogger("brief.agent")
@@ -1020,7 +1021,15 @@ def run_brief(
         "run_log_dir": current_run_dir(),
     }
 
+    assurance = brief_assurance(
+        run_health=run_health,
+        convergence=convergence,
+        archaeology=archaeology,
+        confidence=confidence,
+    )
+
     return {
+        "assurance": assurance,
         "run_health": run_health,
         "parsed": parsed,
         "prompts": prompts,
