@@ -1,5 +1,8 @@
 # BRIEF
 
+> **Deployment status:** pilot hardening is in progress. Use only behind organisational access controls, with approved low-sensitivity data. Raw payload logging and web grounding are disabled by default. See [the deployment baseline](docs/DEPLOYMENT.md) and [security policy](SECURITY.md).
+
+
 ### Bias & Research Intelligence Evaluation Framework
 
 **Two tools for researchers: one audits what AI already assumes about a research brief before fieldwork begins; the other audits a discussion guide or questionnaire for questions that would confirm rather than test.**
@@ -104,7 +107,14 @@ Each agent runs inside its own error recovery. If one fails it records the failu
 
 ## Trying it
 
-Three briefs and a flawed guide are in `tests/`. The quickest check is the guide audit: paste `tests/sample-guide.md` with the bank brief from `tests/briefs.json` in the optional box. Expected: Q2, Q3, Q4, Q6, Q7, Q8 and Q10 flagged; Q1, Q5 and Q9 clean; "lack financial literacy" marked confirmed only.
+Security regression tests are in `tests/test_security.py` and run in CI. The earlier README referred to an evaluation fixture set that was not committed; those claims have been removed until a reviewed, non-sensitive evaluation set is added.
+
+Run the offline checks with:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
 
 A brief to try:
 
@@ -145,16 +155,7 @@ Open `http://localhost:5000`.
 
 **Offline unit tests** (no API key, under a second): `python -m unittest discover -s tests`. A fake model client exercises the plumbing: step order, key passing, fallbacks, scoring arithmetic, the confidence cap and label, quick mode, the audit counting rules, and the Word and PDF exporters.
 
-**Evaluation set**: `tests/briefs.json` holds eleven briefs (ten market research, one UX) with planted biases and the flags BRIEF should raise.
-
-```bash
-python evaluate.py                 # all eleven briefs, about eleven analyses of API usage
-python evaluate.py --quick         # cheap smoke test, one model, no web search
-python evaluate.py --dry           # list the checks without calling the API
-python evaluate.py ev-adoption-rural
-```
-
-It prints PASS or MISS per planted flag and writes a scorecard to `tests/results/`. A change to prompts or models counts as an improvement only if this score rises.
+**Evaluation status:** `evaluate.py` remains as a harness, but its historical `tests/briefs.json` fixture is not present in this repository. Do not treat model quality as regression-tested until a reviewed fixture is added and its score is enforced in CI.
 
 ---
 
@@ -176,8 +177,9 @@ documents.py       PDF, DOCX and text extraction for uploads
 export.py          designed Word and PDF documents from the result data
 app.py             Flask routes, sessions, server-sent progress
 templates/         index.html (markup only)
+templates/         minimal server-rendered application shell
 static/            css/brief.css and js/brief.js (no build step)
-tests/             unit tests, evaluation brief set, sample guide
+tests/             offline security and access-control regression tests
 evaluate.py        runs the brief set and scores what BRIEF caught
 Dockerfile         container build; render.yaml and Procfile for PaaS hosts
 ```
@@ -190,7 +192,7 @@ This section is for whoever has to run BRIEF inside an organisation. It covers w
 
 ### What it is
 
-A single-process Python web application. No database, no message queue, no background workers beyond threads inside the one process. State lives in process memory for 30 minutes per session and in a local `runs/` folder as JSON files. It can run on a laptop, a small VM, a container platform, or a PaaS such as Render.
+A single-process Python web application. No database, no message queue, no background workers beyond threads inside the one process. State lives in process memory for 30 minutes per session. Raw JSON traces are disabled by default and are written under `runs/` only when explicitly enabled. It can run on a laptop, a small VM, a container platform, or a PaaS such as Render.
 
 ### Runtime and dependencies
 
@@ -219,15 +221,15 @@ A full brief analysis makes roughly 45 API calls; a guide audit makes three to f
 
 ### Data flow and retention
 
-- **What leaves the network:** the brief or guide text the user pastes or uploads, and the text of the AI answers it generates, are sent to OpenAI inside API requests. Under OpenAI's API terms this data is not used to train models and is retained by OpenAI for up to 30 days for abuse monitoring, or zero days if the organisation has a zero-data-retention agreement. Confirm the current terms for the account in use.
-- **What is stored locally:** every run writes one JSON file per agent to `runs/<timestamp>/` on the host, containing the inputs and outputs of that agent, including the brief text. This is the audit trail that makes scores traceable. Rotate or delete the folder on a schedule that matches the organisation's retention policy, or set `BRIEF_RUN_LOG_DIR` to a mounted volume. Nothing else is written to disk.
+- **What leaves the network:** the brief or guide text the user pastes or uploads, and the text of the AI answers it generates, are sent to OpenAI inside API requests. OpenAI states that API data is not used for training unless the customer opts in. Abuse-monitoring and application-state retention are separate controls. This application passes `store=False`, but the operator must confirm the project’s current retention, residency and web-search eligibility before use.
+- **What is stored locally:** by default, no raw prompt or response payload is written. Enabling `BRIEF_LOG_RAW_PAYLOADS` writes sensitive JSON traces under `runs/` and therefore requires an approved encrypted location, access policy and automatic deletion schedule.
 - **What is stored in memory:** session results for 30 minutes (`SESSION_TTL_SECONDS`), then discarded.
 - **Uploaded files** are read into memory, converted to text, and discarded. The file itself is not saved.
 - **Exports** (Word, PDF, Markdown) are generated on request and streamed to the browser; they are not saved on the server.
 
 ### Authentication and access
 
-The app has one optional shared password (`BRIEF_PASSWORD`, HTTP Basic). It has no user accounts, roles, or SSO. For anything beyond a small trusted group, put it behind the organisation's existing reverse proxy or identity-aware proxy (Azure AD Application Proxy, Cloudflare Access, an OAuth2 proxy) and leave `BRIEF_PASSWORD` unset. The app trusts whatever reaches it, so do not expose it to the public internet without one of these in front.
+The application fails closed unless it receives a trusted identity from an organisational proxy, has an explicitly configured pilot password, or is running with the development-only insecure flag. Production should set `BRIEF_TRUST_AUTH_PROXY=true` behind an OIDC/identity-aware proxy that strips inbound copies of the identity header. The Basic password remains a small-pilot fallback, not production identity.
 
 ### Configuration
 
@@ -259,7 +261,7 @@ Constraints to respect:
 - **Long requests.** A full analysis streams progress for five to seven minutes over one HTTP connection. Set proxy and load balancer idle timeouts to at least 15 minutes for the `/progress/` path, and disable response buffering for it (the app sends the `X-Accel-Buffering: no` header for nginx).
 - **Resources.** Under 300 MB of memory and negligible CPU; the work happens at OpenAI. A 0.5 vCPU, 512 MB instance is enough for a team.
 
-`GET /health` returns `{"status": "ok"}` for liveness checks.
+`GET /health/live` provides unauthenticated liveness without dependency details. Authenticated `GET /health/ready` checks required configuration.
 
 ### Cost
 
