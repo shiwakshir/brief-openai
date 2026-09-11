@@ -38,6 +38,7 @@ from comparison import compare_reports
 from contracts import validate_review_decisions
 from review import build_findings
 from telemetry import metrics
+from limits import SlidingWindowLimiter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("brief.app")
@@ -93,6 +94,7 @@ class SessionStore:
 
 sessions = SessionStore(config.SESSION_TTL_SECONDS)
 job_slots = threading.BoundedSemaphore(config.MAX_CONCURRENT_JOBS)
+user_limiter = SlidingWindowLimiter(config.MAX_JOBS_PER_USER_HOUR, 3600)
 
 
 def _start_background(session_id: str, work) -> None:
@@ -233,7 +235,11 @@ def analyse():
     parsed_override = data.get("parsed") if isinstance(data.get("parsed"), dict) else None
     quick = bool(data.get("quick"))
 
+    if not user_limiter.allow(g.identity):
+        metrics.increment("jobs_rate_limited")
+        return jsonify({"error": "Your hourly analysis limit has been reached."}), 429
     if not job_slots.acquire(blocking=False):
+        metrics.increment("jobs_capacity_rejected")
         return jsonify({"error": "The service is at capacity; try again later."}), 429
     try:
         session_id = sessions.create(g.identity)
@@ -256,7 +262,11 @@ def audit():
     brief = (data.get("brief") or "").strip()[:config.MAX_BRIEF_LENGTH]
     mode = (data.get("mode") or "market").lower()
 
+    if not user_limiter.allow(g.identity):
+        metrics.increment("jobs_rate_limited")
+        return jsonify({"error": "Your hourly analysis limit has been reached."}), 429
     if not job_slots.acquire(blocking=False):
+        metrics.increment("jobs_capacity_rejected")
         return jsonify({"error": "The service is at capacity; try again later."}), 429
     try:
         session_id = sessions.create(g.identity)
