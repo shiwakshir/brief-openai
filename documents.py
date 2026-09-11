@@ -33,6 +33,8 @@ def _from_pdf(data: bytes) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data), strict=True)
+    if reader.is_encrypted:
+        raise UnsupportedFileType("Password-protected PDFs are not accepted.")
     if len(reader.pages) > config.MAX_PDF_PAGES:
         raise ValueError(f"PDF exceeds the {config.MAX_PDF_PAGES}-page limit.")
     return "\n".join((page.extract_text() or "") for page in reader.pages)
@@ -43,6 +45,9 @@ def _from_docx(data: bytes) -> str:
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = {item.filename.lower() for item in archive.infolist()}
+            if any(name.endswith("vbaproject.bin") for name in names):
+                raise UnsupportedFileType("Macro-enabled documents are not accepted.")
             expanded = sum(item.file_size for item in archive.infolist())
             if expanded > config.MAX_DOCX_EXPANDED_BYTES:
                 raise ValueError("DOCX expands beyond the configured safety limit.")
