@@ -20,6 +20,7 @@ elements:
 from __future__ import annotations
 
 import io
+import os
 import re
 import time
 from html import escape
@@ -48,7 +49,9 @@ CELL_TONES = [
 ]
 
 
-_UNPRINTABLE = re.compile(r"[\u2500-\u25ff\U0001F000-\U0001FFFF\ufffd]")
+# DejaVu covers the scripts and accented characters normally found in research
+# reports. Remove only glyphs it cannot draw reliably and invisible controls.
+_UNPRINTABLE = re.compile(r"[\U0001F000-\U0001FFFF\ufffd\ufe0f\u200b-\u200f\u2588-\u258f]")
 
 
 def _s(value: Any, limit: int = 4000) -> str:
@@ -484,6 +487,34 @@ def _pdf_markup(text: str) -> str:
 # PDF renderer
 # ---------------------------------------------------------------------------
 
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "fonts")
+
+
+def _register_fonts() -> tuple[str, str]:
+    """Embed a broad Unicode font, falling back safely if assets are absent."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.pdfmetrics import registerFontFamily
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    regular = os.path.join(FONT_DIR, "DejaVuSans.ttf")
+    bold = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+    oblique = os.path.join(FONT_DIR, "DejaVuSans-Oblique.ttf")
+    if not (os.path.exists(regular) and os.path.exists(bold)):
+        return "Helvetica", "Helvetica-Bold"
+    if "DejaVuSans" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("DejaVuSans", regular))
+        pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", bold))
+        if os.path.exists(oblique):
+            pdfmetrics.registerFont(TTFont("DejaVuSans-Oblique", oblique))
+        registerFontFamily(
+            "DejaVuSans",
+            normal="DejaVuSans",
+            bold="DejaVuSans-Bold",
+            italic="DejaVuSans-Oblique" if os.path.exists(oblique) else "DejaVuSans",
+            boldItalic="DejaVuSans-Bold",
+        )
+    return "DejaVuSans", "DejaVuSans-Bold"
+
 def render_pdf(elements: list[tuple], title: str) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_LEFT
@@ -496,18 +527,19 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
     def hexc(h: str):
         return colors.HexColor("#" + h)
 
-    body = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, leading=13.5, textColor=hexc(INK), spaceAfter=6, alignment=TA_LEFT)
+    font, font_bold = _register_fonts()
+    body = ParagraphStyle("body", fontName=font, fontSize=9.5, leading=13.5, textColor=hexc(INK), spaceAfter=6, alignment=TA_LEFT)
     small = ParagraphStyle("small", parent=body, fontSize=8, leading=11, textColor=hexc(INK2), spaceAfter=4)
     cell = ParagraphStyle("cell", parent=body, fontSize=8.5, leading=11.5, spaceAfter=0)
-    cell_head = ParagraphStyle("cellhead", parent=cell, fontName="Helvetica-Bold", textColor=hexc(ACCENT), fontSize=7.5)
+    cell_head = ParagraphStyle("cellhead", parent=cell, fontName=font_bold, textColor=hexc(ACCENT), fontSize=7.5)
     headings = {
-        1: ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=17, leading=21, textColor=hexc(INK), spaceBefore=14, spaceAfter=8),
-        2: ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=13, leading=17, textColor=hexc(ACCENT), spaceBefore=12, spaceAfter=5),
-        3: ParagraphStyle("h3", fontName="Helvetica-Bold", fontSize=10.5, leading=14, textColor=hexc(INK), spaceBefore=9, spaceAfter=3),
+        1: ParagraphStyle("h1", fontName=font_bold, fontSize=17, leading=21, textColor=hexc(INK), spaceBefore=14, spaceAfter=8),
+        2: ParagraphStyle("h2", fontName=font_bold, fontSize=13, leading=17, textColor=hexc(ACCENT), spaceBefore=12, spaceAfter=5),
+        3: ParagraphStyle("h3", fontName=font_bold, fontSize=10.5, leading=14, textColor=hexc(INK), spaceBefore=9, spaceAfter=3),
     }
-    title_style = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=26, leading=30, textColor=hexc(INK), spaceAfter=6)
+    title_style = ParagraphStyle("title", fontName=font_bold, fontSize=26, leading=30, textColor=hexc(INK), spaceAfter=6)
     subtitle = ParagraphStyle("subtitle", parent=body, fontSize=10.5, leading=15, textColor=hexc(INK2))
-    eyebrow = ParagraphStyle("eyebrow", parent=small, fontName="Helvetica-Bold", textColor=hexc(ACCENT), fontSize=8)
+    eyebrow = ParagraphStyle("eyebrow", parent=small, fontName=font_bold, textColor=hexc(ACCENT), fontSize=8)
     width = A4[0] - 36 * mm
     pad = [("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]
@@ -579,7 +611,7 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
             items = [ListItem(Paragraph(_pdf_markup(x), cell), leftIndent=14) for x in e[1] if x]
             if items:
                 if kind == "numbered":
-                    story.append(ListFlowable(items, bulletType="1", leftIndent=14, bulletFontName="Helvetica-Bold",
+                    story.append(ListFlowable(items, bulletType="1", leftIndent=14, bulletFontName=font_bold,
                                               bulletFontSize=9, bulletColor=hexc(ACCENT)))
                 else:
                     story.append(ListFlowable(items, bulletType="bullet", start="\u2022", leftIndent=14,
@@ -592,7 +624,7 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
         canvas.saveState()
         canvas.setStrokeColor(hexc(BORDER))
         canvas.line(18 * mm, 16 * mm, A4[0] - 18 * mm, 16 * mm)
-        canvas.setFont("Helvetica", 7.5)
+        canvas.setFont(font, 7.5)
         canvas.setFillColor(hexc(MUTED))
         canvas.drawString(18 * mm, 11 * mm, f"{title}  ·  Generated by BRIEF")
         canvas.drawRightString(A4[0] - 18 * mm, 11 * mm, f"Page {doc.page}")

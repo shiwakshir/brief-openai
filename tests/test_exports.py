@@ -46,3 +46,17 @@ def test_reviewed_audit_exports_to_pdf_and_word():
     docx, _, _ = export_document("audit", reviewed_audit(), "docx")
     assert pdf.startswith(b"%PDF")
     assert docx.startswith(b"PK")
+
+
+def test_pdf_preserves_accented_research_text():
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    report = reviewed_report()
+    report["parsed"]["core_question"] = "Cum cercetăm gospodăriile din România și España?"
+    pdf, _, _ = export_document("report", report, "pdf")
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages)
+
+    assert "România" in text
+    assert "España" in text

@@ -53,6 +53,8 @@ Paste or upload a discussion guide, interview script, survey or usability test p
 
 Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: internal recommendation and score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, and an appendix of AI answers. Filenames carry the category and a timestamp.
 
+PDF exports embed DejaVu Sans so accented and multilingual research text is retained without relying on fonts installed on the host machine.
+
 ### Interface
 
 The browser interface is designed as a supervised internal workspace rather than a client-facing report portal:
