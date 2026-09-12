@@ -212,6 +212,10 @@ async function reviewBrief() {
     const data = await resp.json();
     if (data.error) { showError(data.error); return; }
     const p = data.parsed || {};
+    const parseNotice = document.getElementById('review-parse-notice');
+    const parseWarnings = Array.isArray(p.parse_warnings) ? p.parse_warnings.filter(Boolean) : [];
+    parseNotice.textContent = parseWarnings.join(' ');
+    parseNotice.style.display = parseWarnings.length ? 'block' : 'none';
     document.getElementById('rv-category').value = p.category || '';
     document.getElementById('rv-topic').value = p.topic || p.product_or_service || p.category || '';
     document.getElementById('rv-audience').value = p.target_audience || '';

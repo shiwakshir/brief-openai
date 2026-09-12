@@ -122,6 +122,8 @@ BRIEF is an internal research quality-assurance assistant, not an external clien
 4. Start with the internal workflow recommendation and its reasons, then inspect the score, evidence trail, run-health warnings and source status.
 5. Complete researcher sign-off for material findings. Read the full report in the browser or export it; the header switches light and dark mode.
 
+The review screen is populated from the pasted brief. BRIEF uses the configured AI model first and fills any missing fields with conservative local extraction. If the model is unavailable, the local extraction still identifies common labelled and prose fields—including explicit client hypotheses—and the screen shows a warning so the researcher can check every field before continuing. A working API key is still required to run the analysis itself.
+
 ---
 
 ## Trying it

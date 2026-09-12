@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
@@ -74,6 +75,181 @@ def _attach_hypothesis_ids(parsed: Parsed) -> Parsed:
 
 def mode_note(parsed: Parsed | None) -> str:
     return UX_MODE_NOTE if str((parsed or {}).get("research_mode", "")).lower() == "ux" else ""
+
+
+_GEO_NAMES = (
+    "United Kingdom", "United States", "Saudi Arabia", "South Africa", "New Zealand",
+    "UK", "US", "USA", "Europe", "European Union", "France", "Spain", "Romania",
+    "Germany", "Poland", "India", "Nigeria", "Brazil", "Mexico", "Netherlands",
+    "Japan", "China", "Canada", "Australia", "Ireland", "Italy", "Portugal",
+    "Belgium", "Sweden", "Norway", "Denmark", "Finland", "Austria", "Switzerland",
+    "Greece", "Turkey", "UAE", "Singapore", "Indonesia", "Malaysia", "Philippines",
+    "Thailand", "Vietnam", "Kenya", "Ghana", "Egypt", "Morocco", "Argentina",
+    "Chile", "Colombia", "Peru", "Global",
+)
+
+
+def _labelled_value(text: str, labels: tuple[str, ...]) -> str:
+    names = "|".join(re.escape(label) for label in labels)
+    match = re.search(rf"(?im)^\s*(?:{names})\s*[:\-]\s*(.+?)\s*$", text)
+    return match.group(1).strip(" \t-–—.;") if match else ""
+
+
+def _first_match(text: str, patterns: tuple[str, ...]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            return re.sub(r"\s+", " ", match.group(1)).strip(" \t-–—.;,")
+    return ""
+
+
+def _mentioned_geographies(text: str) -> list[str]:
+    hits: list[tuple[int, str]] = []
+    for name in _GEO_NAMES:
+        for match in re.finditer(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.IGNORECASE):
+            canonical = "UK" if name.lower() == "united kingdom" else "US" if name.lower() == "united states" else name
+            hits.append((match.start(), canonical))
+    result: list[str] = []
+    for _, name in sorted(hits):
+        if name.casefold() not in {item.casefold() for item in result}:
+            result.append(name)
+    return result
+
+
+def _extract_explicit_hypotheses(text: str) -> list[str]:
+    candidates: list[str] = []
+    # Briefs are often pasted as one paragraph, so a labelled hypothesis block
+    # may appear mid-line rather than at the start of a formatted section.
+    for match in re.finditer(
+        r"\b(?:client\s+)?(?:hypotheses|assumptions|beliefs)\s*:\s*(.+?)(?=\r?\n\s*[A-Za-z][A-Za-z /_-]{1,35}:|\Z)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        candidates.append(match.group(1))
+
+    lines = text.splitlines()
+    collecting = False
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"(?i)^(?:client\s+)?(?:hypotheses|assumptions|beliefs)\s*:", stripped):
+            collecting = True
+            inline = stripped.split(":", 1)[1].strip()
+            if inline:
+                candidates.append(inline)
+            continue
+        if collecting:
+            if re.match(r"^[A-Za-z][A-Za-z /_-]{1,35}:\s*", stripped):
+                collecting = False
+            elif re.match(r"^(?:[-*•]|\d+[.)])\s+", stripped):
+                candidates.append(re.sub(r"^(?:[-*•]|\d+[.)])\s+", "", stripped))
+            elif not stripped:
+                continue
+            else:
+                collecting = False
+
+    belief_pattern = (
+        r"\b(?:the\s+client|client|they)\s+"
+        r"(?:believes?|assumes?|expects?|thinks?|suspects?|hypothesi[sz]es?)\s+"
+        r"(.+?)(?=[.!?](?:\s|$)|$)"
+    )
+    for match in re.finditer(belief_pattern, text, re.IGNORECASE | re.DOTALL):
+        statement = re.sub(r"\s+", " ", match.group(1)).strip()
+        candidates.extend(re.split(r"\s*(?:;|\band\s+that\b)\s*", statement, flags=re.IGNORECASE))
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        parts = re.split(r"\s*(?:;|\r?\n\s*(?:[-*•]|\d+[.)])\s+)\s*", value)
+        for part in parts:
+            cleaned = re.sub(r"^(?:that\s+)", "", part.strip(" \t-–—.;,"), flags=re.IGNORECASE)
+            key = " ".join(cleaned.casefold().split())
+            if len(cleaned) >= 8 and key not in seen:
+                seen.add(key)
+                result.append(cleaned)
+    return result
+
+
+def _local_parse_brief(brief: str, mode: str = "market") -> Parsed:
+    """Best-effort extraction for structured briefs when the model parse is unavailable."""
+    text = brief.strip()
+    geography = _labelled_value(text, ("Geography", "Markets", "Countries", "Regions"))
+    if not geography:
+        places = _mentioned_geographies(text)
+        geography = ", ".join(places) if places else "Global"
+
+    topic = _labelled_value(text, ("Specific topic", "Topic", "Subject", "Product category"))
+    if not topic:
+        topic = _first_match(text, (
+            r"\b(?:research|study)(?:\s+for\s+.+?)?\s+(?:into|on|about)\s+(.+?)(?=\s+among\b|\s+aimed\s+at\b|[.!?]|$)",
+            r"\b(?:explor(?:e|ing)|understand(?:ing)?|researching)\s+(.+?)(?=\s+among\b|\s+aimed\s+at\b|[.!?]|$)",
+            r"\b(?:launching|testing)\s+(?:an?\s+|the\s+)?(.+?)(?=\s+(?:aimed\s+at|for|with)\b|[,.]|$)",
+        ))
+
+    category = _labelled_value(text, ("Category", "Market", "Domain")) or topic
+    if not category:
+        first_sentence = re.split(r"[.!?]\s+", re.sub(r"\s+", " ", text), maxsplit=1)[0]
+        category = first_sentence[:120].strip(" \t-–—.;,") or "Not specified"
+    if not topic:
+        topic = category
+
+    audience = _labelled_value(text, ("Target audience", "Audience", "Participants", "Users"))
+    if not audience:
+        audience = _first_match(text, (
+            r"\bamong\s+(.+?)(?=\s+in\s+(?:the\s+)?(?:" + "|".join(re.escape(x) for x in _GEO_NAMES) + r")\b|[.!?]|$)",
+            r"\baimed\s+at\s+(.+?)(?=[,.]|\s+in\s+(?:the\s+)?(?:" + "|".join(re.escape(x) for x in _GEO_NAMES) + r")\b|$)",
+            r"\bfor\s+(.+?)(?=\s+aged\b|\s+in\s+(?:the\s+)?(?:" + "|".join(re.escape(x) for x in _GEO_NAMES) + r")\b|[.!?]|$)",
+        )) or "Not specified"
+
+    objective = _labelled_value(text, ("Research objective", "Objective", "Purpose", "Research question"))
+    if not objective:
+        objective = _first_match(text, (
+            r"\b(?:wants?|aims?|seeks?)\s+to\s+(.+?)(?=[.!?]|$)",
+            r"\b(?:research|study)\s+(?:is\s+)?(?:to|will)\s+(.+?)(?=[.!?]|$)",
+        )) or f"Understand {topic}"
+
+    methodology = _labelled_value(text, ("Methodology", "Method", "Research approach", "Research"))
+    if not methodology:
+        methodology = _first_match(text, (
+            r"\b((?:quantitative|qualitative|quant|qual|online)\s+(?:survey|interviews?|communities|focus groups?|usability tests?).*?)(?=[.!?]|$)",
+            r"\b(\d[\d,]*\s+(?:in-depth\s+)?(?:interviews?|participants?|respondents?|employees|users).*?)(?=[.!?]|$)",
+        )) or "Not specified"
+
+    sample = _labelled_value(text, ("Sample definition", "Sample", "Recruitment", "Recruits"))
+    if not sample:
+        sample = _first_match(text, (
+            r"\b(\d[\d,]*\s+(?:in-depth\s+)?(?:interviews?|participants?|respondents?|employees|users).*?)(?=[.!?]|$)",
+            r"\b(?:survey|interviews?|focus groups?|communities)\s+(?:of|with)\s+(.+?)(?=[.!?]|$)",
+        )) or audience
+
+    fieldwork = _labelled_value(text, ("Fieldwork locations", "Fieldwork", "Research locations"))
+    if not fieldwork:
+        fieldwork = _first_match(text, (
+            r"\b(?:fieldwork|research)\s+(?:will\s+be\s+)?(?:conducted|run|held)?\s*(?:across|in)\s+(.+?)(?=[.!?]|$)",
+            r"\b(?:interviews?|focus groups?|communities|survey)\s+in\s+(.+?)(?=[.!?]|$)",
+        )) or geography
+    if fieldwork.casefold() in {"each market", "all markets", "each country", "all countries"}:
+        fieldwork = geography
+
+    hypotheses = _extract_explicit_hypotheses(text)
+    core_question = _labelled_value(text, ("Core question", "Main question", "Research question"))
+    if not core_question:
+        core_question = objective.rstrip(".?") + "?"
+
+    return {
+        "core_question": core_question,
+        "category": category,
+        "target_audience": audience,
+        "geography": geography,
+        "research_objective": objective,
+        "client_hypotheses": hypotheses,
+        "methodology_hints": methodology,
+        "topic": topic,
+        "sample_definition": sample,
+        "fieldwork_locations": fieldwork,
+        "product_or_service": _labelled_value(text, ("Product or service", "Product", "Service")) if str(mode).lower() == "ux" else "",
+        "user_task": _labelled_value(text, ("User task", "Task", "Journey")) if str(mode).lower() == "ux" else "",
+        "research_mode": "ux" if str(mode).lower() == "ux" else "market",
+    }
 
 
 # Step 1: parse the brief
@@ -1036,13 +1212,55 @@ def _safe_step(fn: Callable[..., Any], fallback: Any, *args: Any, **kwargs: Any)
 def parse_brief(brief: str, mode: str = "market") -> Parsed:
     """Step 1 on its own, so the UI can show the extracted hypotheses for review."""
     start_run_log()
-    return _safe_step(step_parse, {
-        "core_question": "Could not parse", "category": "Unknown",
-        "target_audience": "Unknown", "geography": "Global",
-        "research_objective": "Unknown", "client_hypotheses": [],
-        "methodology_hints": "Not specified", "topic": "Unknown", "product_or_service": "", "user_task": "",
-        "research_mode": "ux" if str(mode).lower() == "ux" else "market"
-    }, brief, mode)
+    local = _local_parse_brief(brief, mode)
+    key = str(config.OPENAI_API_KEY or "").strip()
+    key_configured = bool(key and key != "missing-development-key" and not key.startswith("your_"))
+    model_result: Parsed = {}
+    parse_error = ""
+    if key_configured:
+        try:
+            candidate = step_parse(brief, mode)
+            if isinstance(candidate, dict):
+                model_result = candidate
+        except Exception as exc:
+            parse_error = f"{type(exc).__name__}: {exc}"
+            log.warning("step_parse failed; using local extraction: %s", parse_error)
+            log_step("error_step_parse", {"error": parse_error, "fallback": "local_extraction"})
+    else:
+        parse_error = "OpenAI API key is not configured"
+
+    parsed = dict(local)
+    for field in (
+        "core_question", "category", "target_audience", "geography", "research_objective",
+        "methodology_hints", "topic", "sample_definition", "fieldwork_locations",
+        "product_or_service", "user_task",
+    ):
+        value = model_result.get(field)
+        if isinstance(value, str) and value.strip() and value.strip().casefold() not in {"unknown", "not known", "n/a"}:
+            parsed[field] = value.strip()
+    hypotheses = model_result.get("client_hypotheses")
+    if isinstance(hypotheses, list):
+        cleaned = [str(item).strip() for item in hypotheses if str(item).strip()]
+        if cleaned:
+            parsed["client_hypotheses"] = cleaned
+
+    required = ("category", "target_audience", "geography", "client_hypotheses")
+    model_complete = bool(model_result) and all(model_result.get(field) for field in required)
+    if model_complete:
+        parsed["parse_status"] = "model"
+        parsed["parse_warnings"] = []
+    elif model_result:
+        parsed["parse_status"] = "model_with_local_fallback"
+        parsed["parse_warnings"] = ["Some fields were completed from the pasted brief using local extraction. Check them before continuing."]
+    else:
+        parsed["parse_status"] = "local_fallback"
+        parsed["parse_warnings"] = [
+            "AI parsing was unavailable, so these fields were extracted locally from the pasted brief. Check them before continuing."
+        ]
+    if parse_error:
+        parsed["parse_error_type"] = parse_error.split(":", 1)[0]
+    log_step("01_parse_fallback", {"status": parsed["parse_status"], "result": parsed})
+    return parsed
 
 
 def run_brief(

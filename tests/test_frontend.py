@@ -13,6 +13,7 @@ def test_full_research_workflow_is_present_on_homepage():
     assert response.status_code == 200
     for element_id in (
         "brief-input", "guide-input", "rv-topic", "review-section", "progress-section",
+        "review-parse-notice",
         "panel-contamination", "panel-archaeology", "panel-evidence",
         "panel-deliverables", "panel-review", "panel-areview",
     ):
@@ -36,6 +37,7 @@ def test_frontend_uses_csp_safe_external_event_wiring():
     assert "function renderDeliverables" in javascript
     assert "function renderEvidence" in javascript
     assert "function renderInternalRecommendation" in javascript
+    assert "p.parse_warnings" in javascript
     assert "setAttribute('aria-selected'" in javascript
     assert "setAttribute('aria-pressed'" in javascript
     assert "function safeUrl" in javascript
