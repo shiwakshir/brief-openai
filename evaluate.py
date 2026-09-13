@@ -124,6 +124,11 @@ def check(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
         actual_count = int((result.get("run_health") or {}).get("unassessed_hypotheses") or 0)
         structural.append({"check": "unassessed_hypotheses", "expected": expected_count,
                            "actual": actual_count, "passed": actual_count == expected_count})
+    if "expect_hypotheses_preserved" in case:
+        expected_count = int(case["expect_hypotheses_preserved"])
+        actual_count = len(assessed)
+        structural.append({"check": "hypotheses_preserved", "expected": expected_count,
+                           "actual": actual_count, "passed": actual_count == expected_count})
     return {"id": case["id"], "expected": expected, "forbidden": forbidden,
             "contamination": contamination, "structural": structural,
             "step_errors": (result.get("run_health") or {}).get("step_errors", [])}
@@ -169,6 +174,19 @@ def main() -> int:
                 cases.extend(json.load(handle))
     if not isinstance(cases, list) or not cases:
         raise SystemExit("Evaluation dataset must contain cases")
+    structural_keys = ("expect_unassessed", "expect_hypotheses_preserved")
+    for case in cases:
+        has_expectation = (
+            case.get("expected_findings") or case.get("expect_any")
+            or case.get("forbidden_findings") or case.get("expect_none")
+            or case.get("expected_high_convergence") or case.get("expect_high_contamination")
+            or any(key in case for key in structural_keys)
+        )
+        if not has_expectation:
+            raise SystemExit(f"Case {case.get('id', '<unknown>')} has no expectations")
+        for label in case.get("forbidden_findings", []):
+            if "*" in [str(phrase) for phrase in label.get("phrases", [])]:
+                raise SystemExit(f"Case {case.get('id', '<unknown>')} uses a wildcard forbidden expectation")
     if not any(case.get("expected_findings") or case.get("expect_any") for case in cases):
         raise SystemExit("Evaluation dataset needs positive labelled expectations")
     if not any(case.get("forbidden_findings") or case.get("expect_none") for case in cases):
@@ -183,10 +201,9 @@ def main() -> int:
         for group in case.get("expect_any", []):
             if not isinstance(group, list) or not group:
                 raise SystemExit(f"Case {case['id']} has an incomplete expectation")
-        if "expect_unassessed" in case and (
-            not isinstance(case["expect_unassessed"], int) or case["expect_unassessed"] < 0
-        ):
-            raise SystemExit(f"Case {case['id']} has an invalid structural expectation")
+        for key in structural_keys:
+            if key in case and (not isinstance(case[key], int) or case[key] < 0):
+                raise SystemExit(f"Case {case['id']} has an invalid structural expectation")
     if args.ids:
         cases = [case for case in cases if case["id"] in args.ids]
     if not cases:

@@ -164,7 +164,7 @@ def authenticate():
     if config.ENVIRONMENT in {"development", "test"} and config.ALLOW_INSECURE_DEVELOPMENT:
         if any(header in request.headers for header in ("Forwarded", "X-Forwarded-For", "X-Real-IP")):
             return jsonify({"error": "Forwarded requests cannot use insecure development access."}), 403
-        if request.remote_addr not in {"127.0.0.1", "::1"}:
+        if request.remote_addr not in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}:
             return jsonify({"error": "Insecure development access is restricted to this computer."}), 403
         g.identity = "local-development"
         return None
@@ -410,4 +410,4 @@ def progress(session_id: str):
 
 
 if __name__ == "__main__":
-    app.run(debug=config.DEBUG, port=5000, threaded=True)
+    app.run(host="127.0.0.1", debug=config.DEBUG, port=5000, threaded=True)

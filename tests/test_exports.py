@@ -100,3 +100,10 @@ def test_missing_confidence_score_exports_as_na_not_none_or_fifty():
     assert "n/a" in text
     assert "Insufficient data" in text
     assert "None" not in text
+
+    docx_bytes, _, _ = export_document("report", report, "docx")
+    import docx
+    document = docx.Document(BytesIO(docx_bytes))
+    score_cells = [cell.text.strip() for cell in document.tables[0].rows[0].cells]
+    assert score_cells[0] == "n/a"
+    assert "Insufficient data" in score_cells[1]

@@ -57,6 +57,12 @@ def test_failed_result_is_checked_before_the_success_ui_is_applied():
     assert result_block.index("if (msg.status !== 'done')") < result_block.index("Done. Here\\'s what BRIEF found.")
     assert "const hasScore = Number.isInteger(c.confidence_score);" in javascript
     assert "${hasScore ? score : 'n/a'}" in javascript
+    assert "classList.add('failed')" in result_block
+    audit_start = javascript.index("async function runAudit")
+    audit_result = javascript.index("if (msg.type === 'result')", audit_start)
+    audit_end = javascript.index("es.onerror =", audit_result)
+    audit_block = javascript[audit_result:audit_end]
+    assert audit_block.index("if (msg.status !== 'done')") < audit_block.index("classList.add('done')")
 
 
 def test_csp_blocks_inline_scripts_but_allows_presentational_inline_styles():

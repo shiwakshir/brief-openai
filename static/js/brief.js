@@ -314,8 +314,8 @@ async function runAnalysis() {
       es.close();
       currentEventSource = null;
       if (msg.status !== 'done') {
-        document.getElementById('progress-status').textContent = msg.status === 'cancelled' ? 'Analysis cancelled.' : 'Analysis could not be completed.';
-        document.querySelectorAll('.step-cell').forEach(c => c.classList.remove('active'));
+        document.getElementById('progress-status').textContent = msg.status === 'cancelled' ? 'Cancelled. The analysis was stopped.' : 'Failed. BRIEF did not produce a report.';
+        document.querySelectorAll('.step-cell.active').forEach(c => { c.classList.remove('active'); c.classList.add('failed'); });
         showError(msg.status === 'cancelled' ? 'Analysis cancelled.' : 'Analysis failed: ' + msg.message);
         document.getElementById('run-btn').disabled = false;
         document.getElementById('confirm-btn').disabled = false;
@@ -383,8 +383,13 @@ async function runAudit() {
     if (msg.type === 'result') {
       es.close();
       currentEventSource = null;
+      if (msg.status !== 'done') {
+        document.querySelectorAll('.step-cell.active').forEach(c => { c.classList.remove('active'); c.classList.add('failed'); });
+        showError(msg.status === 'cancelled' ? 'Audit cancelled.' : 'Audit failed: ' + msg.message);
+        document.getElementById('audit-btn').disabled = false;
+        return;
+      }
       document.querySelectorAll('.step-cell').forEach(c => { c.classList.remove('active'); c.classList.add('done'); });
-      if (msg.status !== 'done') { showError(msg.status === 'cancelled' ? 'Audit cancelled.' : 'Audit failed: ' + msg.message); document.getElementById('audit-btn').disabled = false; return; }
       auditData = msg.data;
       renderAudit(auditData);
       document.getElementById('landing').style.display = 'none';

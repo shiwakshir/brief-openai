@@ -120,7 +120,7 @@ def test_failed_prompt_generation_is_recorded_and_scores_are_withheld(monkeypatc
     })
     monkeypatch.setattr(agent, "step_cluster", lambda *_: {})
     monkeypatch.setattr(agent, "step_gap_analysis", lambda *_: {})
-    monkeypatch.setattr(agent, "step_hypothesis_contamination", lambda *args: agent._contamination_fallback(args[-1]))
+    monkeypatch.setattr(agent, "step_hypothesis_contamination", lambda *args: agent._contamination_fallback(args[0], args[-1]))
     monkeypatch.setattr(agent, "step_assumption_archaeology", lambda *_: {})
     monkeypatch.setattr(agent, "step_temporal_drift", lambda *_: {})
     monkeypatch.setattr(agent, "step_competitor_intelligence", lambda *_: {})
@@ -133,24 +133,29 @@ def test_failed_prompt_generation_is_recorded_and_scores_are_withheld(monkeypatc
     assert result["convergence"]["hypotheses"][0]["measured_score"] is None
     assert result["run_health"]["status"] in {"degraded", "invalid"}
     assert any(error["step"] == "generate" for error in result["run_health"]["step_errors"])
+    assert result["run_health"]["prompt_generation"] == {
+        "designed": 6, "used": 1, "error": "prompt generation failed"
+    }
 
 
 def test_failed_contamination_explanation_preserves_ids_and_valid_measured_scores():
+    parsed = {"client_hypotheses": ["Cost is the main barrier", "A sixth claim"]}
+    records = agent._hypothesis_records(parsed)
     convergence = {"hypotheses": [{
-        "hypothesis_id": "hyp-123456789abc", "hypothesis": "Cost is the main barrier",
+        **records[0],
         "classification_status": "valid", "measured_score": 70, "main": 7, "mentions": 1,
         "n_answers": 10, "presence_pct": 80, "per_model": {"m": {"main": 7}},
         "quotes": [{"model": "m", "quote": "Cost is the main issue."}],
     }, {
-        "hypothesis_id": "hyp-abcdef123456", "hypothesis": "A sixth claim",
+        **records[1],
         "classification_status": "unassessed", "measured_score": None,
     }]}
-    fallback = agent._contamination_fallback(convergence)
+    fallback = agent._contamination_fallback(parsed, convergence)
     by_id = {item["hypothesis_id"]: item for item in fallback["hypotheses_assessed"]}
-    assert set(by_id) == {"hyp-123456789abc", "hyp-abcdef123456"}
-    assert by_id["hyp-123456789abc"]["contamination_score"] == 70
-    assert by_id["hyp-123456789abc"]["evidence_quotes"] == ["Cost is the main issue."]
-    assert by_id["hyp-abcdef123456"]["contamination_score"] is None
+    assert set(by_id) == {record["hypothesis_id"] for record in records}
+    assert by_id[records[0]["hypothesis_id"]]["contamination_score"] == 70
+    assert by_id[records[0]["hypothesis_id"]]["evidence_quotes"] == ["Cost is the main issue."]
+    assert by_id[records[1]["hypothesis_id"]]["contamination_score"] is None
 
 
 def test_failed_confidence_step_never_invents_a_midpoint_score(monkeypatch):
@@ -352,12 +357,28 @@ def test_evaluator_ignores_unlisted_fields_and_wildcard_detects_real_findings():
 
 
 def test_evaluator_checks_unassessed_hypotheses_structurally():
-    case = {"id": "six", "expect_unassessed": 1}
-    passed = check(case, {"run_health": {"unassessed_hypotheses": 1}})
-    failed = check(case, {"run_health": {"unassessed_hypotheses": 0}})
+    case = {"id": "six", "expect_unassessed": 1, "expect_hypotheses_preserved": 6}
+    assessed = [{"hypothesis": f"H{number}"} for number in range(6)]
+    passed = check(case, {"run_health": {"unassessed_hypotheses": 1},
+                          "contamination": {"hypotheses_assessed": assessed}})
+    failed = check(case, {"run_health": {"unassessed_hypotheses": 0},
+                          "contamination": {"hypotheses_assessed": assessed[:5]}})
     assert passed["structural"][0]["passed"] is True
-    assert failed["structural"][0]["passed"] is False
+    assert all(item["passed"] for item in passed["structural"])
+    assert not any(item["passed"] for item in failed["structural"])
     assert thresholds_pass(metrics([failed]), 0, 0) is False
+
+
+def test_contamination_fallback_preserves_parsed_hypotheses_missing_from_convergence():
+    parsed = {"client_hypotheses": ["First", "Second"]}
+    first = agent._hypothesis_records(parsed)[0]
+    fallback = agent._contamination_fallback(parsed, {"hypotheses": [{
+        **first, "classification_status": "valid", "measured_score": 60,
+        "main": 1, "mentions": 1, "n_answers": 2,
+    }]})
+    assert [item["hypothesis"] for item in fallback["hypotheses_assessed"]] == ["First", "Second"]
+    assert fallback["hypotheses_assessed"][0]["contamination_score"] == 60
+    assert fallback["hypotheses_assessed"][1]["contamination_score"] is None
 
 
 def test_evaluator_does_not_score_repeated_screener_criteria():
@@ -368,3 +389,14 @@ def test_evaluator_does_not_score_repeated_screener_criteria():
         "criterion": "Existing customers aged 25 to 40", "why": ""
     }]}})
     assert card["expected"][0]["passed"] is False
+
+
+def test_checked_in_negative_expectations_do_not_use_wildcards():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    cases = json.loads((root / "evals" / "labelled_cases.json").read_text(encoding="utf-8"))
+    cases += json.loads((root / "evals" / "synthetic_research_cases.json").read_text(encoding="utf-8"))
+    for case in cases:
+        for label in case.get("forbidden_findings", []):
+            assert "*" not in label.get("phrases", []), case["id"]

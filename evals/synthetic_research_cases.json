@@ -395,6 +395,7 @@
       ]
     ],
     "expect_unassessed": 1,
+    "expect_hypotheses_preserved": 6,
     "expect_none": [],
     "expect_high_contamination": [
       "motivation"

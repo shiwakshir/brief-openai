@@ -471,6 +471,12 @@
     color: var(--ok);
   }
 
+  .step-cell.failed {
+    border-color: var(--danger);
+    background: var(--danger-dim);
+    color: var(--danger);
+  }
+
   .step-num {
     font-size: var(--text-xs);
     opacity: 0.5;

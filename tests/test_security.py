@@ -1,6 +1,8 @@
 import base64
 import io
+import json
 import os
+import time
 import pytest
 
 os.environ.setdefault("BRIEF_ENVIRONMENT", "test")
@@ -8,6 +10,7 @@ os.environ.setdefault("BRIEF_PASSWORD", "test-password")
 os.environ.setdefault("BRIEF_LOG_RAW_PAYLOADS", "false")
 
 import app as app_module
+import agent
 from documents import UnsupportedFileType, extract_text
 
 
@@ -35,6 +38,8 @@ def test_insecure_development_mode_is_loopback_only(monkeypatch):
     monkeypatch.setattr(app_module.config, "ENVIRONMENT", "development")
     client = app_module.app.test_client()
     assert client.get("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}).status_code == 200
+    assert client.get("/", environ_base={"REMOTE_ADDR": "::1"}).status_code == 200
+    assert client.get("/", environ_base={"REMOTE_ADDR": "::ffff:127.0.0.1"}).status_code == 200
     assert client.get("/", environ_base={"REMOTE_ADDR": "192.0.2.10"}).status_code == 403
 
 
@@ -98,3 +103,26 @@ def test_small_text_upload_is_processed_without_persistence():
     )
     assert response.status_code == 200
     assert "text" in response.get_json()
+
+
+def test_zero_answer_failure_reaches_the_progress_stream(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "run_brief",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            agent.NoModelAnswersError("No AI answers were returned, so BRIEF stopped without creating a report.")
+        ),
+    )
+    client = app_module.app.test_client()
+    started = client.post("/analyse", headers=auth(), json={"brief": "A sufficiently detailed brief. " * 4})
+    assert started.status_code == 200
+    session_id = started.get_json()["session_id"]
+    for _ in range(50):
+        session = app_module.sessions.get(session_id, "researcher")
+        if session and session.result is not None:
+            break
+        time.sleep(0.01)
+    response = client.get(f"/progress/{session_id}", headers=auth())
+    events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+    assert events[-1]["status"] == "error"
+    assert "stopped without creating a report" in events[-1]["message"]

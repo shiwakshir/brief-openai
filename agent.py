@@ -369,7 +369,7 @@ def step_query(prompts, parsed, probe_models=None):
             else:
                 persona_responses.append(rec)
 
-    expected_per_model = {model: config.PROBE_PROMPT_COUNT + len(personas) for model in models}
+    expected_per_model = {model: config.PROBE_PROMPT_COUNT + config.PROBE_PERSONA_COUNT for model in models}
     collected_per_model = {
         model: sum(1 for item in responses + persona_responses if item.get("model") == model)
         for model in models
@@ -380,6 +380,8 @@ def step_query(prompts, parsed, probe_models=None):
         "models": models,
         "expected_answers": sum(expected_per_model.values()),
         "expected_per_model": expected_per_model,
+        "prompts_used": len(prompts),
+        "prompts_designed": config.PROBE_PROMPT_COUNT,
         "collected_per_model": collected_per_model,
     }
 
@@ -1297,11 +1299,17 @@ def _safe_step(fn: Callable[..., Any], fallback: Any, *args: Any, **kwargs: Any)
         return fb
 
 
-def _contamination_fallback(convergence: dict[str, Any]) -> dict[str, Any]:
+def _contamination_fallback(parsed: Parsed, convergence: dict[str, Any], error: str = "The contamination explanation stage failed.") -> dict[str, Any]:
     """Preserve measured hypotheses if only the explanation stage fails."""
     assessed = []
     valid_scores = []
-    for item in convergence.get("hypotheses", []) or []:
+    measured_by_id = {
+        item.get("hypothesis_id"): item
+        for item in convergence.get("hypotheses", []) or []
+        if item.get("hypothesis_id")
+    }
+    for record in _hypothesis_records(parsed):
+        item = measured_by_id.get(record["hypothesis_id"], {})
         status = item.get("classification_status") or "insufficient_data"
         score = item.get("measured_score") if status == "valid" else None
         if isinstance(score, int) and not isinstance(score, bool):
@@ -1318,12 +1326,13 @@ def _contamination_fallback(convergence: dict[str, Any]) -> dict[str, Any]:
             label = "Insufficient data"
             responses = "Insufficient data: the convergence measurement could not be completed."
         assessed.append({
-            "hypothesis_id": item.get("hypothesis_id"),
-            "hypothesis": item.get("hypothesis"),
+            "hypothesis_id": record["hypothesis_id"],
+            "hypothesis": record["hypothesis"],
             "classification_status": status,
             "contamination_score": score,
             "score_label": label,
-            "explanation": "The measured result is shown, but the explanatory analysis failed and requires human review.",
+            "explanation": "Explanation unavailable: the explanation stage failed. Human review is required.",
+            "explanation_status": "unavailable",
             "evidence_quotes": [
                 str(quote.get("quote") or "") if isinstance(quote, dict) else str(quote)
                 for quote in item.get("quotes") or []
@@ -1348,7 +1357,7 @@ def _contamination_fallback(convergence: dict[str, Any]) -> dict[str, Any]:
         "overall_explanation": "Measured convergence is preserved, but the explanation stage failed. Human review is required.",
         "genuinely_original_hypotheses": [],
         "most_dangerous_assumption": "",
-        "explanation_contract_errors": ["The contamination explanation stage failed."],
+        "explanation_contract_errors": [error],
     }
 
 
@@ -1457,6 +1466,11 @@ def run_brief(
         )
     if not prompts:
         prompts = [parsed.get("core_question", "Tell me about this topic")]
+    prompt_generation = {
+        "designed": config.PROBE_PROMPT_COUNT,
+        "used": len(prompts),
+        "error": prompt_generation_error or None,
+    }
 
     progress("Asking AI the same question 10 different ways", 3)
     query_data = _safe_step(step_query, {"base_responses": [], "persona_responses": []}, prompts, parsed, probe_models)
@@ -1486,9 +1500,13 @@ def run_brief(
     progress("Scoring the client's assumptions against AI consensus", 6)
     contamination = _safe_step(
         step_hypothesis_contamination,
-        _contamination_fallback(convergence),
+        _contamination_fallback(parsed, convergence),
         parsed, clusters, query_data, convergence,
     )
+    if not contamination.get("hypotheses_assessed") and parsed.get("hypothesis_records"):
+        error = str(contamination.get("_error") or "The contamination explanation stage returned no hypotheses.")
+        contamination = _contamination_fallback(parsed, convergence, error)
+        contamination["_error"] = error
 
     progress("Tracing where AI's assumptions come from", 7)
     archaeology = _safe_step(step_assumption_archaeology, {
@@ -1521,7 +1539,8 @@ def run_brief(
     progress("Scoring overall research design confidence", 11)
     confidence = _safe_step(step_confidence, {
         "confidence_score": None, "confidence_label": "Insufficient data",
-        "headline": "The research-design review could not be produced.", "score_rationale": "",
+        "headline": "The research-design review could not be produced.",
+        "score_rationale": "No research-design review indicator was computed. Rerun the analysis before relying on this section.",
         "top_three_risks": [], "what_would_raise_it": ""
     }, parsed, clusters, gaps, temporal_drift, contamination, methodology, archaeology)
 
@@ -1554,6 +1573,7 @@ def run_brief(
         "quick_mode": bool(quick),
         "probe_models": probe_models,
         "answers_collected": answers_collected,
+        "prompt_generation": prompt_generation,
         "answer_coverage": convergence.get("answer_coverage") or answer_coverage(query_data),
         "grounded": bool(archaeology.get("grounded")),
         "classification_failures": classification_failures,
