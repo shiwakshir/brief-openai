@@ -471,10 +471,51 @@ def _runs(text: str) -> Iterator[tuple[str, bool, bool]]:
         yield text[pos:], False, False
 
 
+_CJK = re.compile(r"[\u2e80-\u2fdf\u3000-\u30ff\u3100-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]+")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffe\uffff]")
+_cjk_fonts_ready = False
+_CJK_EMBEDDED = False
+
+
+def _register_cjk_fonts() -> None:
+    """Register the bundled CJK font, with ReportLab CID fonts as a fallback."""
+    global _cjk_fonts_ready, _CJK_EMBEDDED
+    if _cjk_fonts_ready:
+        return
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    droid = os.path.join(FONT_DIR, "DroidSansFallback.ttf")
+    if os.path.exists(droid):
+        if "DroidSansFallback" not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont("DroidSansFallback", droid))
+        _CJK_EMBEDDED = True
+    else:
+        for name in ("STSong-Light", "HeiseiMin-W3", "HYSMyeongJo-Medium"):
+            if name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(UnicodeCIDFont(name))
+    _cjk_fonts_ready = True
+
+
+def _cjk_font_for(chunk: str) -> str:
+    if _CJK_EMBEDDED:
+        return "DroidSansFallback"
+    if re.search(r"[\u3040-\u30ff]", chunk):
+        return "HeiseiMin-W3"
+    if re.search(r"[\uac00-\ud7af]", chunk):
+        return "HYSMyeongJo-Medium"
+    return "STSong-Light"
+
+
+def _with_cjk_fonts(escaped: str) -> str:
+    return _CJK.sub(lambda match: f'<font name="{_cjk_font_for(match.group(0))}">{match.group(0)}</font>', escaped)
+
+
 def _pdf_markup(text: str) -> str:
     out = []
-    for chunk, bold, italic in _runs(text):
-        piece = escape(chunk)
+    for chunk, bold, italic in _runs(_CONTROL.sub("", text)):
+        piece = _with_cjk_fonts(escape(chunk))
         if bold:
             piece = f"<b>{piece}</b>"
         if italic:
@@ -528,6 +569,7 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
         return colors.HexColor("#" + h)
 
     font, font_bold = _register_fonts()
+    _register_cjk_fonts()
     body = ParagraphStyle("body", fontName=font, fontSize=9.5, leading=13.5, textColor=hexc(INK), spaceAfter=6, alignment=TA_LEFT)
     small = ParagraphStyle("small", parent=body, fontSize=8, leading=11, textColor=hexc(INK2), spaceAfter=4)
     cell = ParagraphStyle("cell", parent=body, fontSize=8.5, leading=11.5, spaceAfter=0)

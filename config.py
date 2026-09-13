@@ -31,6 +31,16 @@ def _int(name: str, default: int, minimum: int = 1) -> int:
     return value
 
 
+def _ratio(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number between 0 and 1") from exc
+    if not 0 <= value <= 1:
+        raise RuntimeError(f"{name} must be between 0 and 1")
+    return value
+
+
 ENVIRONMENT = os.getenv("BRIEF_ENVIRONMENT", "development").strip().lower()
 POLICY_PROFILE = os.getenv("BRIEF_POLICY_PROFILE", "internal_confidential").strip()
 PROMPT_VERSION = os.getenv("BRIEF_PROMPT_VERSION", "2026-09-11.2-topic-alignment")
@@ -64,6 +74,7 @@ MAX_JOBS_PER_USER_HOUR = _int("BRIEF_MAX_JOBS_PER_USER_HOUR", 10)
 MAX_HYPOTHESES_GROUNDED = 3
 MAX_HYPOTHESES_MEASURED = 5
 PROBE_WORKERS = _int("BRIEF_PROBE_WORKERS", 8)
+MIN_ANSWER_COVERAGE = _ratio("BRIEF_MIN_ANSWER_COVERAGE", 0.8)
 
 # Authentication
 BRIEF_PASSWORD = os.getenv("BRIEF_PASSWORD", "")

@@ -30,7 +30,7 @@ from typing import Any
 from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context
 
 import config
-from agent import parse_brief, run_brief
+from agent import NoModelAnswersError, parse_brief, run_brief
 from audit import run_audit
 from documents import UnsupportedFileType, extract_text
 from export import export_document
@@ -122,6 +122,10 @@ def _start_background(session_id: str, work) -> None:
             report["findings"] = build_findings(report)
             session.result = {"status": "done", "data": report}
             metrics.observe_job(started, "completed")
+        except NoModelAnswersError as exc:
+            log.warning("background run stopped without probe evidence: %s", exc)
+            session.result = {"status": "error", "message": str(exc)}
+            metrics.observe_job(started, "failed")
         except Exception:
             if session.cancelled.is_set():
                 session.result = {"status": "cancelled", "message": "The analysis was cancelled."}
@@ -158,6 +162,8 @@ def authenticate():
             return None
         return Response("Password required", 401, {"WWW-Authenticate": 'Basic realm="BRIEF"'})
     if config.ENVIRONMENT in {"development", "test"} and config.ALLOW_INSECURE_DEVELOPMENT:
+        if request.remote_addr not in {"127.0.0.1", "::1"}:
+            return jsonify({"error": "Insecure development access is restricted to this computer."}), 403
         g.identity = "local-development"
         return None
     return jsonify({"error": "Authentication is not configured."}), 503

@@ -27,6 +27,16 @@ def test_application_routes_require_authentication():
     assert client.get("/", headers=auth()).status_code == 200
 
 
+def test_insecure_development_mode_is_loopback_only(monkeypatch):
+    monkeypatch.setattr(app_module.config, "BRIEF_PASSWORD", "")
+    monkeypatch.setattr(app_module.config, "TRUST_AUTH_PROXY", False)
+    monkeypatch.setattr(app_module.config, "ALLOW_INSECURE_DEVELOPMENT", True)
+    monkeypatch.setattr(app_module.config, "ENVIRONMENT", "development")
+    client = app_module.app.test_client()
+    assert client.get("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}).status_code == 200
+    assert client.get("/", environ_base={"REMOTE_ADDR": "192.0.2.10"}).status_code == 403
+
+
 def test_security_headers_are_present():
     response = app_module.app.test_client().get("/health/live")
     assert response.headers["X-Content-Type-Options"] == "nosniff"

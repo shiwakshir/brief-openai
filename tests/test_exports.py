@@ -60,3 +60,24 @@ def test_pdf_preserves_accented_research_text():
 
     assert "România" in text
     assert "España" in text
+
+
+def test_pdf_preserves_latin_greek_cyrillic_and_cjk_text():
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    report = reviewed_report()
+    report["parsed"]["core_question"] = "Zürich Müller Ελλάδα Кириллица 日本語 中文 Łódź Zoë Résumé"
+    pdf, _, _ = export_document("report", report, "pdf")
+    reader = PdfReader(BytesIO(pdf))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    fonts = " ".join(
+        str(font)
+        for page in reader.pages
+        for font in ((page.get("/Resources") or {}).get("/Font") or {}).values()
+    )
+
+    for value in ("Zürich", "Müller", "Ελλάδα", "Кириллица", "日本語", "中文", "Łódź", "Zoë", "Résumé"):
+        assert value in text
+    assert "DroidSansFallback" in fonts

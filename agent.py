@@ -36,6 +36,10 @@ MODEL = config.MODEL
 ACRONYMS = {"uk", "us", "usa", "eu", "ux", "ai", "nhs", "b2b", "b2c", "cx", "roi", "kpi", "gen", "id"}
 
 
+class NoModelAnswersError(RuntimeError):
+    """Raised when a run cannot obtain any probe-model evidence."""
+
+
 UX_MODE_NOTE = """
 RESEARCH MODE: UX research. The subject is a product, service or interface and how people use it.
 Treat 'audience' as the user group, 'category' as the product or task domain, and hypotheses as
@@ -365,8 +369,66 @@ def step_query(prompts, parsed, probe_models=None):
             else:
                 persona_responses.append(rec)
 
-    return {"base_responses": responses, "persona_responses": persona_responses,
-            "models": models}
+    expected_per_model = {model: len(prompts) + len(personas) for model in models}
+    collected_per_model = {
+        model: sum(1 for item in responses + persona_responses if item.get("model") == model)
+        for model in models
+    }
+    return {
+        "base_responses": responses,
+        "persona_responses": persona_responses,
+        "models": models,
+        "expected_answers": len(jobs),
+        "expected_per_model": expected_per_model,
+        "collected_per_model": collected_per_model,
+    }
+
+
+def answer_coverage(query_data: dict[str, Any]) -> dict[str, Any]:
+    """Return deterministic overall and per-model answer coverage."""
+    answers = query_data.get("base_responses", []) + query_data.get("persona_responses", [])
+    models = list(dict.fromkeys(query_data.get("models", []) or [
+        str(item.get("model") or "unknown") for item in answers
+    ]))
+    observed = {
+        model: sum(1 for item in answers if str(item.get("model") or "unknown") == model)
+        for model in models
+    }
+    supplied_expected = query_data.get("expected_per_model") or {}
+    expected_per_model = {
+        model: int(supplied_expected.get(model, observed.get(model, 0)))
+        for model in models
+    }
+    expected_total = int(query_data.get("expected_answers") or sum(expected_per_model.values()))
+    collected_total = len(answers)
+    overall_ratio = collected_total / expected_total if expected_total else 0.0
+    per_model = {}
+    reasons = []
+    threshold = config.MIN_ANSWER_COVERAGE
+    if expected_total and overall_ratio < threshold:
+        reasons.append(
+            f"overall answer coverage was {collected_total}/{expected_total} "
+            f"({overall_ratio:.0%}), below the {threshold:.0%} minimum"
+        )
+    for model in models:
+        expected = expected_per_model[model]
+        collected = observed.get(model, 0)
+        ratio = collected / expected if expected else 0.0
+        per_model[model] = {"collected": collected, "expected": expected, "ratio": ratio}
+        if expected and ratio < threshold:
+            reasons.append(
+                f"{model} answer coverage was {collected}/{expected} "
+                f"({ratio:.0%}), below the {threshold:.0%} minimum"
+            )
+    return {
+        "ok": collected_total > 0 and not reasons,
+        "threshold": threshold,
+        "collected": collected_total,
+        "expected": expected_total,
+        "ratio": overall_ratio,
+        "per_model": per_model,
+        "reasons": reasons or (["no probe answers were available"] if not collected_total else []),
+    }
 
 
 # Step 3b: measured convergence
@@ -380,8 +442,10 @@ def step_convergence(parsed, query_data):
     measured_records = hypothesis_records[:5]
     unassessed_records = hypothesis_records[5:]
     answers = query_data.get("base_responses", []) + query_data.get("persona_responses", [])
+    coverage = answer_coverage(query_data)
     if not hypothesis_records:
-        return {"hypotheses": [], "n_answers": len(answers), "models": query_data.get("models", [])}
+        return {"hypotheses": [], "n_answers": len(answers), "models": query_data.get("models", []),
+                "answer_coverage": coverage}
     if not answers:
         insufficient = [{
             **record, "n_answers": 0, "classification_status": "insufficient_data",
@@ -396,7 +460,25 @@ def step_convergence(parsed, query_data):
             "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
         } for record in unassessed_records]
         return {"hypotheses": insufficient + unassessed, "n_answers": 0,
-                "models": query_data.get("models", []), "measurement_limit": 5}
+                "models": query_data.get("models", []), "measurement_limit": 5,
+                "answer_coverage": coverage}
+
+    if not coverage["ok"]:
+        insufficient = [{
+            **record, "n_answers": len(answers), "classification_status": "insufficient_coverage",
+            "classification_errors": coverage["reasons"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in measured_records]
+        unassessed = [{
+            **record, "n_answers": len(answers), "classification_status": "unassessed",
+            "classification_errors": ["outside the five-hypothesis measurement limit"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in unassessed_records]
+        return {"hypotheses": insufficient + unassessed, "n_answers": len(answers),
+                "models": query_data.get("models", []), "measurement_limit": 5,
+                "answer_coverage": coverage}
 
     system = """You are a strict content classifier.
 For each numbered AI answer, decide how it treats the given hypothesis:
@@ -502,7 +584,8 @@ Include every answer number exactly once."""
         "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
     } for record in unassessed_records)
     out = {"hypotheses": results, "n_answers": len(answers),
-           "models": query_data.get("models", []), "measurement_limit": 5}
+           "models": query_data.get("models", []), "measurement_limit": 5,
+           "answer_coverage": coverage}
     log_step("03b_convergence", out)
     return out
 
@@ -705,7 +788,8 @@ Return ONLY valid JSON with this exact structure:
             measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: UNASSESSED; outside the five-hypothesis measurement limit"
             continue
         if c.get("classification_status") != "valid":
-            measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: INSUFFICIENT DATA; classification contract failed"
+            reason = "; ".join(c.get("classification_errors") or ["classification could not be completed"])
+            measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: INSUFFICIENT DATA; {reason}"
             continue
         measured_block += (
             f"\n- {c['hypothesis_id']} {c['hypothesis']}: presented as main cause in {c['main']}/{c['n_answers']} answers, "
@@ -783,8 +867,12 @@ Score each hypothesis for AI contamination using the rubric (0=completely origin
                 h["classification_status"] = "unassessed"
                 h["responses_matching"] = "Unassessed: outside the five-hypothesis measurement limit."
             else:
-                h["classification_status"] = "insufficient_data"
-                h["responses_matching"] = "Insufficient data: not every answer received exactly one valid classification."
+                h["classification_status"] = (measured or {}).get("classification_status", "insufficient_data")
+                reasons = "; ".join((measured or {}).get("classification_errors") or [])
+                h["responses_matching"] = (
+                    f"Insufficient data: {reasons}." if reasons
+                    else "Insufficient data: not every answer received exactly one valid classification."
+                )
         h["evidence_quotes"] = [str(q).strip().strip('"').strip("\u201c\u201d") for q in h.get("evidence_quotes", [])]
         if h["contamination_score"] is not None:
             h["score_label"] = band(h["contamination_score"])
@@ -1308,6 +1396,12 @@ def run_brief(
     progress("Asking AI the same question 10 different ways", 3)
     query_data = _safe_step(step_query, {"base_responses": [], "persona_responses": []}, prompts, parsed, probe_models)
     log_step("03_query", query_data)
+    answers_collected = len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", []))
+    if answers_collected == 0:
+        raise NoModelAnswersError(
+            "No AI answers were returned, so BRIEF stopped without creating a report. "
+            "Check the OpenAI API key, model names, account access and connection, then try again."
+        )
     convergence = _safe_step(step_convergence, {"hypotheses": [], "n_answers": 0, "models": []}, parsed, query_data)
 
     progress("Finding the patterns in what AI says", 4)
@@ -1380,7 +1474,7 @@ def run_brief(
             step_errors.append({"step": name, "error": str(obj["_error"])[:300]})
     classification_failures = sum(
         1 for item in convergence.get("hypotheses", [])
-        if item.get("classification_status") == "insufficient_data"
+        if item.get("classification_status") in {"insufficient_data", "insufficient_coverage"}
     )
     unassessed_hypotheses = sum(
         1 for item in convergence.get("hypotheses", [])
@@ -1392,7 +1486,8 @@ def run_brief(
         "prompt_version": config.PROMPT_VERSION,
         "quick_mode": bool(quick),
         "probe_models": probe_models,
-        "answers_collected": len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", [])),
+        "answers_collected": answers_collected,
+        "answer_coverage": convergence.get("answer_coverage") or answer_coverage(query_data),
         "grounded": bool(archaeology.get("grounded")),
         "classification_failures": classification_failures,
         "unassessed_hypotheses": unassessed_hypotheses,

@@ -5,55 +5,90 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from typing import Any
 
 CASES_PATH = os.path.join("evals", "labelled_cases.json")
+SYNTHETIC_CASES_PATH = os.path.join("evals", "synthetic_research_cases.json")
 RESULTS_DIR = os.path.join("evals", "results")
+
+# Only these model-produced analytical fields are scored. Submitted brief text,
+# parsed fields, hypothesis wording, IDs and raw probe answers are excluded by construction.
+ANALYTICAL_FIELDS = (
+    ("key_finding", "confidence.headline"),
+    ("key_finding", "confidence.score_rationale"),
+    ("key_finding", "confidence.key_finding.statement"),
+    ("risk_to_fieldwork", "confidence.top_three_risks[]"),
+    ("risk_to_fieldwork", "confidence.what_would_raise_it"),
+    ("sample_fit", "gaps.audience_mismatch"),
+    ("sample_fit", "gaps.overrepresented[].explanation"),
+    ("sample_fit", "gaps.underrepresented[].explanation"),
+    ("sample_fit", "gaps.unknown_unknowns[]"),
+    ("sample_fit", "gaps.sample_cannot_test[].why"),
+    ("convergence_analysis", "contamination.overall_explanation"),
+    ("convergence_analysis", "contamination.hypotheses_assessed[].explanation"),
+    ("convergence_analysis", "contamination.hypotheses_assessed[].recommendation"),
+    ("source_landscape", "archaeology.hypothesis_evidence[].summary"),
+    ("source_landscape", "archaeology.hypothesis_evidence[].countries[].for[].finding"),
+    ("source_landscape", "archaeology.hypothesis_evidence[].countries[].against[].finding"),
+    ("source_landscape", "archaeology.dominant_narrative_origin"),
+    ("source_landscape", "archaeology.implication_for_research"),
+    ("temporal_drift", "temporal_drift.drift_explanation"),
+    ("temporal_drift", "temporal_drift.stale_assumptions[].why_stale"),
+    ("temporal_drift", "temporal_drift.stale_assumptions[].research_implication"),
+    ("competitor_intel", "competitor_intel.discussion_guide_implication"),
+    ("methodology", "methodology.method_fit.reason"),
+    ("methodology", "methodology.method_fit.scope_and_cost_note"),
+    ("methodology", "methodology.recommended_approach"),
+    ("methodology", "methodology.sample_design_notes"),
+    ("methodology", "methodology.hypothesis_tests[].how_to_test_it"),
+    ("methodology", "methodology.hypothesis_tests[].what_would_refute_it"),
+    ("deliverables", "deliverables.challenge_note.opening"),
+    ("deliverables", "deliverables.challenge_note.what_we_found"),
+    ("deliverables", "deliverables.challenge_note.what_we_recommend"),
+    ("deliverables", "deliverables.screener_criteria[].criterion"),
+    ("deliverables", "deliverables.screener_criteria[].why"),
+)
+
+
+def _walk(obj: Any, segments: list[str]) -> list[str]:
+    if not segments:
+        return [obj] if isinstance(obj, str) else []
+    head, rest = segments[0], segments[1:]
+    if head.endswith("[]"):
+        values = obj.get(head[:-2]) if isinstance(obj, dict) else None
+        if not isinstance(values, list):
+            return []
+        return [text for value in values for text in _walk(value, rest)]
+    if not isinstance(obj, dict):
+        return []
+    return _walk(obj.get(head), rest)
+
+
+def _normalise(text: str) -> str:
+    return re.sub(r"[\W_]+", " ", text.lower(), flags=re.UNICODE)
 
 
 def explicit_findings(result: dict[str, Any]) -> list[dict[str, str]]:
     """Extract analysis outputs only; never search parsed brief or client hypotheses."""
-    findings: list[dict[str, str]] = []
-
-    def add(category: str, value: Any) -> None:
-        if isinstance(value, dict):
-            text = " ".join(str(v) for k, v in value.items() if k not in {"hypothesis", "hypothesis_id"})
-        elif isinstance(value, list):
-            text = " ".join(str(v) for v in value)
-        else:
-            text = str(value or "")
-        if text.strip():
-            findings.append({"category": category, "text": text.lower()})
-
-    confidence = result.get("confidence") or {}
-    add("key_finding", confidence.get("key_finding"))
-    for risk in confidence.get("top_three_risks") or []:
-        add("risk_to_fieldwork", risk)
-    gaps = result.get("gaps") or {}
-    for gap in gaps.get("sample_cannot_test") or []:
-        add("sample_fit", gap.get("why") if isinstance(gap, dict) else gap)
-    for item in (result.get("contamination") or {}).get("hypotheses_assessed") or []:
-        add("convergence_analysis", {
-            "explanation": item.get("explanation"),
-            "recommendation": item.get("recommendation"),
-            "responses_matching": item.get("responses_matching"),
-        })
-    archaeology = result.get("archaeology") or {}
-    add("source_landscape", archaeology.get("dominant_narrative_origin"))
-    add("source_landscape", archaeology.get("implication_for_research"))
-    methodology = result.get("methodology") or {}
-    add("methodology", methodology.get("recommended_approach"))
-    add("methodology", methodology.get("sample_design_notes"))
-    return findings
+    return [
+        {"category": category, "text": _normalise(text)}
+        for category, path in ANALYTICAL_FIELDS
+        for text in _walk(result, path.split("."))
+        if text.strip()
+    ]
 
 
 def _matches(expectation: dict[str, Any], findings: list[dict[str, str]]) -> str | None:
-    phrases = [str(p).lower() for p in expectation.get("phrases", [])]
+    raw_phrases = [str(p) for p in expectation.get("phrases", [])]
+    wildcard = "*" in raw_phrases
+    phrases = [_normalise(phrase).strip() for phrase in raw_phrases if phrase != "*"]
+    phrases = [phrase for phrase in phrases if phrase]
     category = str(expectation.get("category") or "")
     for finding in findings:
-        if finding["category"] == category:
-            if "*" in phrases:
+        if category == "any_analysis" or finding["category"] == category:
+            if wildcard:
                 return "*"
             hit = next((phrase for phrase in phrases if phrase in finding["text"]), None)
             if hit:
@@ -65,15 +100,21 @@ def check(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     findings = explicit_findings(result)
     expected = []
     forbidden = []
-    for label in case.get("expected_findings", []):
+    expected_labels = case.get("expected_findings") or [
+        {"category": "any_analysis", "phrases": group} for group in case.get("expect_any", [])
+    ]
+    forbidden_labels = case.get("forbidden_findings") or [
+        {"category": "any_analysis", "phrases": [phrase]} for phrase in case.get("expect_none", [])
+    ]
+    for label in expected_labels:
         hit = _matches(label, findings)
         expected.append({**label, "hit": hit, "passed": hit is not None})
-    for label in case.get("forbidden_findings", []):
+    for label in forbidden_labels:
         hit = _matches(label, findings)
         forbidden.append({**label, "hit": hit, "passed": hit is None})
     assessed = (result.get("contamination") or {}).get("hypotheses_assessed") or []
     contamination = []
-    for label in case.get("expected_high_convergence", []):
+    for label in case.get("expected_high_convergence", case.get("expect_high_contamination", [])):
         match = next((item for item in assessed if label.lower() in str(item.get("hypothesis", "")).lower()), None)
         score = match.get("contamination_score") if match else None
         contamination.append({"label": label, "score": score,
@@ -111,26 +152,34 @@ def main() -> int:
     parser.add_argument("--min-precision", type=float, default=.80)
     parser.add_argument("--min-recall", type=float, default=.80)
     args = parser.parse_args()
-    with open(CASES_PATH, encoding="utf-8") as handle:
-        cases = json.load(handle)
+    cases = []
+    for path in (CASES_PATH, SYNTHETIC_CASES_PATH):
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as handle:
+                cases.extend(json.load(handle))
     if not isinstance(cases, list) or not cases:
         raise SystemExit("Evaluation dataset must contain cases")
-    if not any(case.get("expected_findings") for case in cases):
+    if not any(case.get("expected_findings") or case.get("expect_any") for case in cases):
         raise SystemExit("Evaluation dataset needs positive labelled expectations")
-    if not any(case.get("forbidden_findings") for case in cases):
+    if not any(case.get("forbidden_findings") or case.get("expect_none") for case in cases):
         raise SystemExit("Evaluation dataset needs clean/negative labelled expectations")
     for case in cases:
         if not case.get("id") or not case.get("brief"):
             raise SystemExit("Every evaluation case needs an id and brief")
-        for label in case.get("expected_findings", []) + case.get("forbidden_findings", []):
+        labels = case.get("expected_findings", []) + case.get("forbidden_findings", [])
+        for label in labels:
             if not label.get("category") or not label.get("phrases"):
+                raise SystemExit(f"Case {case['id']} has an incomplete expectation")
+        for group in case.get("expect_any", []):
+            if not isinstance(group, list) or not group:
                 raise SystemExit(f"Case {case['id']} has an incomplete expectation")
     if args.ids:
         cases = [case for case in cases if case["id"] in args.ids]
     if not cases:
         raise SystemExit("No matching evaluation cases")
     if args.dry or args.validate_dataset:
-        print(f"Validated {len(cases)} labelled cases, including {sum(bool(c.get('forbidden_findings')) for c in cases)} clean/negative cases.")
+        clean_count = sum(bool(c.get("forbidden_findings") or c.get("expect_none")) for c in cases)
+        print(f"Validated {len(cases)} labelled cases, including {clean_count} clean/negative cases.")
         return 0
 
     from agent import run_brief

@@ -3,6 +3,7 @@ import json
 import agent
 import web_grounding
 from evaluate import check, metrics, thresholds_pass
+import pytest
 
 
 def _query_data():
@@ -35,6 +36,57 @@ def test_duplicate_or_invalid_classifier_rows_do_not_create_a_score(monkeypatch)
     )["hypotheses"][0]
     assert measured["classification_status"] == "insufficient_data"
     assert measured["measured_score"] is None
+
+
+def test_low_overall_answer_coverage_withholds_every_score(monkeypatch):
+    query_data = {
+        "base_responses": [{"model": "m1", "response": "Cost matters."}],
+        "persona_responses": [],
+        "models": ["m1"],
+        "expected_answers": 10,
+        "expected_per_model": {"m1": 10},
+    }
+    monkeypatch.setattr(agent, "call_json", lambda *args, **kwargs: pytest.fail("classifier should not run"))
+    item = agent.step_convergence({"client_hypotheses": ["Cost is the barrier"]}, query_data)["hypotheses"][0]
+    assert item["classification_status"] == "insufficient_coverage"
+    assert item["measured_score"] is None
+    assert "1/10" in item["classification_errors"][0]
+
+
+def test_silent_model_withholds_scores_even_when_overall_coverage_passes(monkeypatch):
+    responses = [
+        {"model": "m1", "response": f"Answer {number}"}
+        for number in range(9)
+    ] + [
+        {"model": "m2", "response": f"Answer {number}"}
+        for number in range(7)
+    ]
+    query_data = {
+        "base_responses": responses,
+        "persona_responses": [],
+        "models": ["m1", "m2"],
+        "expected_answers": 20,
+        "expected_per_model": {"m1": 10, "m2": 10},
+    }
+    monkeypatch.setattr(agent, "call_json", lambda *args, **kwargs: pytest.fail("classifier should not run"))
+    result = agent.step_convergence({"client_hypotheses": ["Cost is the barrier"]}, query_data)
+    assert result["answer_coverage"]["ratio"] == 0.8
+    assert result["answer_coverage"]["per_model"]["m2"]["ratio"] == 0.7
+    assert result["hypotheses"][0]["classification_status"] == "insufficient_coverage"
+
+
+def test_run_stops_when_every_probe_call_fails(monkeypatch):
+    parsed = {
+        "category": "banking", "topic": "bank applications", "core_question": "Why do people stop?",
+        "target_audience": "Adults", "geography": "UK", "client_hypotheses": ["It takes too long"],
+    }
+    monkeypatch.setattr(agent, "step_generate", lambda *_: ["Why do applications fail?"])
+    monkeypatch.setattr(agent, "step_query", lambda *_: {
+        "base_responses": [], "persona_responses": [], "models": ["m"],
+        "expected_answers": 5, "expected_per_model": {"m": 5},
+    })
+    with pytest.raises(agent.NoModelAnswersError, match="stopped without creating a report"):
+        agent.run_brief("A sufficiently detailed brief for an offline test.", parsed_override=parsed)
 
 
 def test_sixth_hypothesis_is_preserved_and_marked_unassessed(monkeypatch):
@@ -200,3 +252,13 @@ def test_evaluator_does_not_reward_repeating_the_input_and_enforces_thresholds()
     assert card["expected"][0]["passed"] is False
     summary = metrics([card])
     assert thresholds_pass(summary, .8, .8) is False
+
+
+def test_evaluator_ignores_unlisted_fields_and_wildcard_detects_real_findings():
+    case = {"id": "clean", "forbidden_findings": [{
+        "category": "risk_to_fieldwork", "phrases": ["*"]
+    }]}
+    ignored = check(case, {"parsed": {"core_question": "price"}, "debug": {"risk": "price"}})
+    assert ignored["forbidden"][0]["passed"] is True
+    detected = check(case, {"confidence": {"top_three_risks": ["The sample excludes older people."]}})
+    assert detected["forbidden"][0]["passed"] is False

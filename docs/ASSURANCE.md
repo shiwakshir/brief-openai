@@ -19,7 +19,7 @@ Model stages are not independent expert reviewers. Agreement between related mod
 
 The research-design and wording indicators are heuristics. Their thresholds are product rules, not validated psychometric scales. They must not be presented as measures of contamination, bias, validity or expected project success.
 
-A run receives at most **moderate** assurance. It becomes **limited** when quick mode is used, stages fail, too few probe answers are available, or public evidence is absent.
+A run receives at most **moderate** assurance. It becomes **limited** when quick mode is used, stages fail, answer coverage falls below 80% overall or for any configured probe model, or public evidence is absent. Convergence scores are withheld below that coverage threshold. If every probe call fails, the run stops without creating a report.
 
 ## Required human review
 

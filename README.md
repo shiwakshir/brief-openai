@@ -53,7 +53,7 @@ Paste or upload a discussion guide, interview script, survey or usability test p
 
 Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: internal recommendation and score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, and an appendix of AI answers. Filenames carry the category and a timestamp.
 
-PDF exports embed DejaVu Sans so accented and multilingual research text is retained without relying on fonts installed on the host machine.
+PDF exports embed DejaVu Sans for Latin, Greek and Cyrillic and Droid Sans Fallback for Chinese, Japanese and Korean text, so multilingual research text is retained without relying on fonts installed on the host machine. Font licence notices are included in `static/fonts/`.
 
 ### Interface
 
@@ -106,7 +106,7 @@ BRIEF is an internal research quality-assurance assistant, not an external clien
 
 ## How the indicators are calculated
 
-**Model-convergence indicators are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it.
+**Model-convergence indicators are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it. Scores are withheld unless at least 80% of expected answers arrive overall and from every configured model. If no probe answers arrive, the run stops without producing a placeholder report.
 
 **Evidence is grounded per hypothesis.** A reasoning model with web search returns structured findings for and against each hypothesis, per country, with verdict, source and year. These feed the drift, methodology, confidence and deliverables agents, so the front page can cite published sources.
 
@@ -130,7 +130,7 @@ The review screen is populated from the pasted brief. BRIEF uses the configured 
 
 ## Trying it
 
-Security, policy, deterministic-rule, contract, export and adversarial regression tests are in `tests/` and run in CI. Synthetic cases live in `evals/`; they are smoke tests, not expert validation.
+Security, policy, deterministic-rule, contract, export and adversarial regression tests are in `tests/` and run in CI. Fifteen synthetic cases live in `evals/`; they are smoke tests, not expert validation. The evaluator reads only an explicit whitelist of analytical output fields, never the submitted brief, parsed fields, hypothesis wording or raw answers.
 
 Run the offline checks with:
 
@@ -169,6 +169,7 @@ Open `http://brief.localhost:5000`. If that name is not recognised by a managed 
 | `OPENAI_GROUNDING_MODEL` | `gpt-5.4-mini` | Reasoning model for web-grounded evidence |
 | `OPENAI_GROUNDING_EFFORT` | `low` | `low`, `medium` or `high`; medium is slower and searches more |
 | `OPENAI_BASE_URL` | unset | Route API calls through an internal gateway |
+| `BRIEF_MIN_ANSWER_COVERAGE` | `0.8` | Minimum overall and per-model probe coverage required before scores are calculated |
 | `BRIEF_PASSWORD` | unset | Shared password for a hosted instance |
 | `BRIEF_RUN_LOG_DIR` | `runs` | Where run logs are written |
 

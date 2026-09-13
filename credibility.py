@@ -23,6 +23,9 @@ def brief_assurance(
         limitations.append("Published evidence was not retrieved; source-landscape claims are model-only.")
     if int(run_health.get("classification_failures") or 0):
         limitations.append("One or more model-convergence indicators have insufficient classification data.")
+    coverage = run_health.get("answer_coverage") or {}
+    if coverage and not coverage.get("ok"):
+        limitations.append("Probe answer coverage was below the required overall or per-model minimum; convergence scores were withheld.")
     if int(run_health.get("unassessed_hypotheses") or 0):
         limitations.append("Additional hypotheses were preserved but not measured beyond the five-hypothesis limit.")
 
@@ -49,6 +52,7 @@ def brief_assurance(
             "published_sources": source_count + hypothesis_sources,
             "web_grounded": bool(run_health.get("grounded")),
             "classification_failures": int(run_health.get("classification_failures") or 0),
+            "answer_coverage": coverage,
             "unassessed_hypotheses": int(run_health.get("unassessed_hypotheses") or 0),
             "prompt_version": run_health.get("prompt_version"),
         },

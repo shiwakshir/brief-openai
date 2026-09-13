@@ -1,0 +1,420 @@
+[
+  {
+    "id": "bank-budgeting",
+    "brief": "We are conducting research for a UK high street bank launching a budgeting feature inside its mobile app, aimed at young professionals aged 25 to 34. The client believes this group struggles to save because they lack financial literacy and self-control, and that in-app nudges will change their behaviour. Research will run in the UK, Germany, and Poland, with online communities and a follow-up survey.",
+    "planted": [
+      "Blames the customer (literacy, self-control) rather than income or living costs",
+      "UK framing applied to Germany and Poland without adjustment",
+      "Young professionals excludes most 25 to 34 year olds"
+    ],
+    "expect_any": [
+      [
+        "income",
+        "wage",
+        "cost of living",
+        "housing",
+        "rent"
+      ],
+      [
+        "germany",
+        "poland",
+        "german",
+        "polish"
+      ],
+      [
+        "young professional",
+        "excludes",
+        "non-graduate",
+        "not in professional"
+      ]
+    ],
+    "expect_high_contamination": [
+      "financial literacy"
+    ]
+  },
+  {
+    "id": "genz-wellness-drinks",
+    "brief": "We are conducting research for a global beverage brand exploring consumer attitudes toward health and wellness drinks among Gen Z adults aged 18 to 25. The client believes Gen Z prioritises natural ingredients and sustainability above taste and price. Research will be conducted across the UK, US, and India.",
+    "planted": [
+      "Gen Z as a single global cohort",
+      "Sustainability over price is a Western middle-class assumption applied to India",
+      "Taste and price dismissed without evidence"
+    ],
+    "expect_any": [
+      [
+        "india",
+        "indian"
+      ],
+      [
+        "price",
+        "afford",
+        "cost"
+      ],
+      [
+        "gen z",
+        "cohort",
+        "homogen",
+        "single group",
+        "one group"
+      ]
+    ],
+    "expect_high_contamination": [
+      "natural ingredients",
+      "sustainability"
+    ]
+  },
+  {
+    "id": "ev-adoption-rural",
+    "brief": "Research for a European car maker into electric vehicle adoption barriers among rural households in France, Spain and Romania. The client assumes range anxiety is the main barrier and that better public charging will unlock demand. Method: 30 in-depth interviews in each market.",
+    "planted": [
+      "Range anxiety is the dominant AI narrative; upfront cost and second-hand supply matter more in rural areas",
+      "Romania is treated like France and Spain",
+      "Public charging assumes households cannot charge at home, which rural homes often can"
+    ],
+    "expect_any": [
+      [
+        "upfront",
+        "purchase price",
+        "cost",
+        "afford",
+        "second-hand",
+        "used car"
+      ],
+      [
+        "romania",
+        "romanian"
+      ],
+      [
+        "home charging",
+        "charge at home",
+        "driveway",
+        "off-street"
+      ]
+    ],
+    "expect_high_contamination": [
+      "range anxiety"
+    ]
+  },
+  {
+    "id": "remote-work-productivity",
+    "brief": "An enterprise software client wants to understand how hybrid working affects team productivity among knowledge workers in the US and Japan. They believe remote work reduces collaboration and that mandating three office days a week will fix it. We plan a quantitative survey of 2,000 employees.",
+    "planted": [
+      "Productivity and collaboration are undefined",
+      "US hybrid debate framing applied to Japan, where office norms differ",
+      "Survey cannot capture the collaboration mechanism the client asks about"
+    ],
+    "expect_any": [
+      [
+        "japan",
+        "japanese"
+      ],
+      [
+        "define",
+        "definition",
+        "measure",
+        "what counts as",
+        "operationalis"
+      ],
+      [
+        "qualitative",
+        "interview",
+        "ethnograph",
+        "observ"
+      ]
+    ],
+    "expect_high_contamination": [
+      "reduces collaboration"
+    ]
+  },
+  {
+    "id": "menopause-supplements",
+    "brief": "A supplements brand wants to launch a menopause support product in the UK and Nigeria. The client believes women aged 45 to 55 are underserved, embarrassed to discuss symptoms, and will buy online rather than in pharmacies. Research: online survey plus five focus groups in London.",
+    "planted": [
+      "All fieldwork in London while the market includes Nigeria",
+      "Embarrassment framing is a Western media narrative",
+      "Online purchase assumption ignores pharmacy and informal retail in Nigeria"
+    ],
+    "expect_any": [
+      [
+        "nigeria",
+        "nigerian",
+        "lagos",
+        "abuja"
+      ],
+      [
+        "london",
+        "only in london",
+        "no fieldwork"
+      ],
+      [
+        "pharmac",
+        "informal",
+        "market trader",
+        "retail"
+      ]
+    ],
+    "expect_high_contamination": [
+      "embarrassed"
+    ]
+  },
+  {
+    "id": "smb-ai-adoption",
+    "brief": "A cloud provider wants to know why small businesses in Brazil and Mexico are slow to adopt AI tools. The client assumes owners lack awareness and technical skills. Method: 20 interviews with owners recruited through the client's existing customer list.",
+    "planted": [
+      "Deficit framing (lack awareness, lack skills) instead of cost, relevance, trust or connectivity",
+      "Sampling from existing customers excludes the non-adopters the question is about",
+      "Brazil and Mexico treated as one market"
+    ],
+    "expect_any": [
+      [
+        "existing customer",
+        "customer list",
+        "sampling",
+        "sample bias",
+        "non-adopter",
+        "non-customer"
+      ],
+      [
+        "cost",
+        "price",
+        "relevance",
+        "trust",
+        "connectivity",
+        "internet"
+      ],
+      [
+        "brazil",
+        "mexico",
+        "portuguese",
+        "spanish"
+      ]
+    ],
+    "expect_high_contamination": [
+      "lack awareness",
+      "technical skills"
+    ]
+  },
+  {
+    "id": "plant-based-meat",
+    "brief": "A food company is researching plant-based meat alternatives among flexitarians aged 30 to 50 in Germany and the Netherlands. The client believes health is the primary motivator, that taste has been solved, and that price parity with meat will trigger mass adoption. Quant survey, n=1,500.",
+    "planted": [
+      "Taste has been solved is an industry press-release claim",
+      "Health as primary motivator is contested; recent data shows category decline",
+      "Price parity alone is unproven"
+    ],
+    "expect_any": [
+      [
+        "taste",
+        "texture"
+      ],
+      [
+        "decline",
+        "slowdown",
+        "fell",
+        "dropped",
+        "stall"
+      ],
+      [
+        "price parity",
+        "price alone",
+        "not sufficient",
+        "necessary but"
+      ]
+    ],
+    "expect_high_contamination": [
+      "health is the primary",
+      "taste has been solved"
+    ]
+  },
+  {
+    "id": "teen-social-media",
+    "brief": "A youth charity wants to understand how teenagers aged 13 to 17 in the UK use social media and how it affects their wellbeing. The charity believes social media is harming teen mental health and wants evidence to support a campaign for age limits. Method: parent survey.",
+    "planted": [
+      "Research designed to confirm a campaign position",
+      "Parents surveyed about teenagers' own experience",
+      "Harm narrative dominates media coverage but the evidence is contested"
+    ],
+    "expect_any": [
+      [
+        "confirm",
+        "advocacy",
+        "campaign",
+        "predetermin",
+        "confirmation"
+      ],
+      [
+        "parent",
+        "proxy",
+        "teenagers themselves",
+        "young people themselves"
+      ],
+      [
+        "contested",
+        "mixed evidence",
+        "debate",
+        "not settled",
+        "causal"
+      ]
+    ],
+    "expect_high_contamination": [
+      "harming"
+    ]
+  },
+  {
+    "id": "luxury-china-post-covid",
+    "brief": "A European luxury fashion house wants to understand post-pandemic luxury spending among affluent consumers aged 25 to 40 in China. The client believes Chinese consumers are shifting from logo-heavy products to quiet luxury, following Western trends, and that Shanghai and Beijing represent the market.",
+    "planted": [
+      "Following Western trends is an Anglo-centric frame",
+      "Two tier-one cities stand in for China",
+      "Post-pandemic framing may be stale"
+    ],
+    "expect_any": [
+      [
+        "tier-2",
+        "tier 2",
+        "lower-tier",
+        "other cities",
+        "beyond shanghai",
+        "chengdu",
+        "hangzhou"
+      ],
+      [
+        "western",
+        "anglo",
+        "eurocentric",
+        "follow"
+      ],
+      [
+        "out of date",
+        "stale",
+        "changed since",
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ]
+    ],
+    "expect_high_contamination": [
+      "quiet luxury"
+    ]
+  },
+  {
+    "id": "pet-insurance-us",
+    "brief": "A US insurer is researching pet insurance uptake among dog owners aged 30 to 45. The client believes owners see pets as family members and will pay for premium plans, and that millennials are the core segment. Method: a national online panel survey.",
+    "planted": [
+      "Pets as family is a marketing truism, not an insight",
+      "Millennials as core segment is an AI default",
+      "Willingness to pay untested against actual claims experience and income"
+    ],
+    "expect_any": [
+      [
+        "income",
+        "afford",
+        "premium",
+        "willingness to pay",
+        "price"
+      ],
+      [
+        "millennial",
+        "segment",
+        "default",
+        "age band"
+      ],
+      [
+        "family member",
+        "truism",
+        "cliche",
+        "widely held",
+        "consensus"
+      ]
+    ],
+    "expect_high_contamination": [
+      "family members",
+      "millennials"
+    ]
+  },
+  {
+    "id": "ux-banking-app-onboarding",
+    "mode": "ux",
+    "brief": "UX research for a UK challenger bank's mobile app onboarding. The product team believes drop-off during sign-up happens because the flow is too long, that users want biometric login, and that older users struggle with the app because they are not tech-savvy. They want five remote unmoderated usability sessions with existing customers aged 25 to 40 to confirm this.",
+    "planted": [
+      "Recruiting existing 25 to 40 year old customers cannot test claims about older users or drop-off",
+      "'Not tech-savvy' is a deficit frame; identity verification, document upload and trust are common real causes",
+      "Unmoderated sessions cannot explain why people drop off"
+    ],
+    "expect_any": [
+      [
+        "existing customer",
+        "dropped off",
+        "non-customer",
+        "older users",
+        "over 55",
+        "over 60"
+      ],
+      [
+        "identity",
+        "verification",
+        "document",
+        "trust",
+        "id check",
+        "kyc"
+      ],
+      [
+        "moderated",
+        "interview",
+        "diary",
+        "why"
+      ]
+    ],
+    "expect_high_contamination": [
+      "too long",
+      "tech-savvy"
+    ]
+  },
+  {
+    "id": "gym-app-six-hypotheses",
+    "brief": "A fitness chain wants to understand why members aged 25 to 45 cancel their gym membership within the first six months. The client believes members cancel because the gym is too far from home, that classes are too crowded, that the app is confusing, that personal trainers are too expensive, that members lose motivation after January, and that a cheaper off-peak tier will retain them. Research: 15 interviews with current members at two city-centre branches plus an exit survey.",
+    "planted": [
+      "Six hypotheses: only five are measured, the sixth must be shown as unassessed, not dropped",
+      "Current members cannot explain cancellation",
+      "Two city-centre branches cannot test the distance hypothesis"
+    ],
+    "expect_any": [
+      [
+        "cancelled",
+        "lapsed",
+        "former member",
+        "people who left",
+        "who cancel"
+      ],
+      [
+        "distance",
+        "city-centre",
+        "city centre",
+        "far from home"
+      ],
+      [
+        "unassessed",
+        "not measured",
+        "measurement limit"
+      ]
+    ],
+    "expect_none": [],
+    "expect_high_contamination": [
+      "motivation"
+    ]
+  },
+  {
+    "id": "clean-brief-cycling",
+    "brief": "A city council wants to understand how residents aged 18 to 75 across all districts travel to work and what would make cycling a realistic option for them. No hypotheses are held; the council wants an open exploration. Research: 40 in-depth interviews stratified by district, age, income and current mode of travel, plus a representative survey of 2,000 residents, in the local language.",
+    "planted": [],
+    "expect_any": [],
+    "expect_none": [
+      "cannot test",
+      "sample cannot test",
+      "capped at 50",
+      "confirmed only"
+    ],
+    "expect_high_contamination": []
+  }
+]
