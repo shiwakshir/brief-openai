@@ -9,14 +9,20 @@ which is how any score in the report can be traced back to evidence.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 import config
 import web_grounding
+from credibility import brief_assurance
+from contracts import validate_report
+from decision import internal_recommendation
+from provenance import report_provenance
 from llm import call_json, call_model, current_run_dir, log_step, start_run_log
 
 log = logging.getLogger("brief.agent")
@@ -27,6 +33,11 @@ ProgressCallback = Callable[[str, int, int], None]
 # Kept as a module attribute so tests and evaluate.py can override it.
 PROBE_MODELS = config.PROBE_MODELS
 MODEL = config.MODEL
+ACRONYMS = {"uk", "us", "usa", "eu", "ux", "ai", "nhs", "b2b", "b2c", "cx", "roi", "kpi", "gen", "id"}
+
+
+class NoModelAnswersError(RuntimeError):
+    """Raised when a run cannot obtain any probe-model evidence."""
 
 
 UX_MODE_NOTE = """
@@ -42,8 +53,207 @@ def _lines(items) -> str:
     return "\n".join(items)
 
 
+def _hypothesis_records(parsed: Parsed) -> list[dict[str, str]]:
+    """Return unique hypotheses with deterministic IDs that survive model reordering."""
+    records: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in parsed.get("client_hypotheses", []) or []:
+        text = str((value.get("hypothesis") or value.get("text") or "") if isinstance(value, dict) else value).strip()
+        canonical = " ".join(text.casefold().split())
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        records.append({
+            "hypothesis_id": f"hyp-{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:12]}",
+            "hypothesis": text,
+        })
+    return records
+
+
+def _attach_hypothesis_ids(parsed: Parsed) -> Parsed:
+    records = _hypothesis_records(parsed)
+    parsed["client_hypotheses"] = [item["hypothesis"] for item in records]
+    parsed["hypothesis_records"] = records
+    return parsed
+
+
 def mode_note(parsed: Parsed | None) -> str:
     return UX_MODE_NOTE if str((parsed or {}).get("research_mode", "")).lower() == "ux" else ""
+
+
+_GEO_NAMES = (
+    "United Kingdom", "United States", "Saudi Arabia", "South Africa", "New Zealand",
+    "UK", "US", "USA", "Europe", "European Union", "France", "Spain", "Romania",
+    "Germany", "Poland", "India", "Nigeria", "Brazil", "Mexico", "Netherlands",
+    "Japan", "China", "Canada", "Australia", "Ireland", "Italy", "Portugal",
+    "Belgium", "Sweden", "Norway", "Denmark", "Finland", "Austria", "Switzerland",
+    "Greece", "Turkey", "UAE", "Singapore", "Indonesia", "Malaysia", "Philippines",
+    "Thailand", "Vietnam", "Kenya", "Ghana", "Egypt", "Morocco", "Argentina",
+    "Chile", "Colombia", "Peru", "Global",
+)
+
+
+def _labelled_value(text: str, labels: tuple[str, ...]) -> str:
+    names = "|".join(re.escape(label) for label in labels)
+    match = re.search(rf"(?im)^\s*(?:{names})\s*[:\-]\s*(.+?)\s*$", text)
+    return match.group(1).strip(" \t-–—.;") if match else ""
+
+
+def _first_match(text: str, patterns: tuple[str, ...]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            return re.sub(r"\s+", " ", match.group(1)).strip(" \t-–—.;,")
+    return ""
+
+
+def _mentioned_geographies(text: str) -> list[str]:
+    hits: list[tuple[int, str]] = []
+    for name in _GEO_NAMES:
+        for match in re.finditer(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.IGNORECASE):
+            canonical = "UK" if name.lower() == "united kingdom" else "US" if name.lower() == "united states" else name
+            hits.append((match.start(), canonical))
+    result: list[str] = []
+    for _, name in sorted(hits):
+        if name.casefold() not in {item.casefold() for item in result}:
+            result.append(name)
+    return result
+
+
+def _extract_explicit_hypotheses(text: str) -> list[str]:
+    candidates: list[str] = []
+    # Briefs are often pasted as one paragraph, so a labelled hypothesis block
+    # may appear mid-line rather than at the start of a formatted section.
+    for match in re.finditer(
+        r"\b(?:client\s+)?(?:hypotheses|assumptions|beliefs)\s*:\s*(.+?)(?=\r?\n\s*[A-Za-z][A-Za-z /_-]{1,35}:|\Z)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        candidates.append(match.group(1))
+
+    lines = text.splitlines()
+    collecting = False
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"(?i)^(?:client\s+)?(?:hypotheses|assumptions|beliefs)\s*:", stripped):
+            collecting = True
+            inline = stripped.split(":", 1)[1].strip()
+            if inline:
+                candidates.append(inline)
+            continue
+        if collecting:
+            if re.match(r"^[A-Za-z][A-Za-z /_-]{1,35}:\s*", stripped):
+                collecting = False
+            elif re.match(r"^(?:[-*•]|\d+[.)])\s+", stripped):
+                candidates.append(re.sub(r"^(?:[-*•]|\d+[.)])\s+", "", stripped))
+            elif not stripped:
+                continue
+            else:
+                collecting = False
+
+    belief_pattern = (
+        r"\b(?:the\s+client|client|they)\s+"
+        r"(?:believes?|assumes?|expects?|thinks?|suspects?|hypothesi[sz]es?)\s+"
+        r"(.+?)(?=[.!?](?:\s|$)|$)"
+    )
+    for match in re.finditer(belief_pattern, text, re.IGNORECASE | re.DOTALL):
+        statement = re.sub(r"\s+", " ", match.group(1)).strip()
+        candidates.extend(re.split(r"\s*(?:;|\band\s+that\b)\s*", statement, flags=re.IGNORECASE))
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        parts = re.split(r"\s*(?:;|\r?\n\s*(?:[-*•]|\d+[.)])\s+)\s*", value)
+        for part in parts:
+            cleaned = re.sub(r"^(?:that\s+)", "", part.strip(" \t-–—.;,"), flags=re.IGNORECASE)
+            key = " ".join(cleaned.casefold().split())
+            if len(cleaned) >= 8 and key not in seen:
+                seen.add(key)
+                result.append(cleaned)
+    return result
+
+
+def _local_parse_brief(brief: str, mode: str = "market") -> Parsed:
+    """Best-effort extraction for structured briefs when the model parse is unavailable."""
+    text = brief.strip()
+    geography = _labelled_value(text, ("Geography", "Markets", "Countries", "Regions"))
+    if not geography:
+        places = _mentioned_geographies(text)
+        geography = ", ".join(places) if places else "Global"
+
+    topic = _labelled_value(text, ("Specific topic", "Topic", "Subject", "Product category"))
+    if not topic:
+        topic = _first_match(text, (
+            r"\b(?:research|study)(?:\s+for\s+.+?)?\s+(?:into|on|about)\s+(.+?)(?=\s+among\b|\s+aimed\s+at\b|[.!?]|$)",
+            r"\b(?:explor(?:e|ing)|understand(?:ing)?|researching)\s+(.+?)(?=\s+among\b|\s+aimed\s+at\b|[.!?]|$)",
+            r"\b(?:launching|testing)\s+(?:an?\s+|the\s+)?(.+?)(?=\s+(?:aimed\s+at|for|with)\b|[,.]|$)",
+        ))
+
+    category = _labelled_value(text, ("Category", "Market", "Domain")) or topic
+    if not category:
+        first_sentence = re.split(r"[.!?]\s+", re.sub(r"\s+", " ", text), maxsplit=1)[0]
+        category = first_sentence[:120].strip(" \t-–—.;,") or "Not specified"
+    if not topic:
+        topic = category
+
+    audience = _labelled_value(text, ("Target audience", "Audience", "Participants", "Users"))
+    if not audience:
+        audience = _first_match(text, (
+            r"\bamong\s+(.+?)(?=\s+in\s+(?:the\s+)?(?:" + "|".join(re.escape(x) for x in _GEO_NAMES) + r")\b|[.!?]|$)",
+            r"\baimed\s+at\s+(.+?)(?=[,.]|\s+in\s+(?:the\s+)?(?:" + "|".join(re.escape(x) for x in _GEO_NAMES) + r")\b|$)",
+            r"\bfor\s+(.+?)(?=\s+aged\b|\s+in\s+(?:the\s+)?(?:" + "|".join(re.escape(x) for x in _GEO_NAMES) + r")\b|[.!?]|$)",
+        )) or "Not specified"
+
+    objective = _labelled_value(text, ("Research objective", "Objective", "Purpose", "Research question"))
+    if not objective:
+        objective = _first_match(text, (
+            r"\b(?:wants?|aims?|seeks?)\s+to\s+(.+?)(?=[.!?]|$)",
+            r"\b(?:research|study)\s+(?:is\s+)?(?:to|will)\s+(.+?)(?=[.!?]|$)",
+        )) or f"Understand {topic}"
+
+    methodology = _labelled_value(text, ("Methodology", "Method", "Research approach", "Research"))
+    if not methodology:
+        methodology = _first_match(text, (
+            r"\b((?:quantitative|qualitative|quant|qual|online)\s+(?:survey|interviews?|communities|focus groups?|usability tests?).*?)(?=[.!?]|$)",
+            r"\b(\d[\d,]*\s+(?:in-depth\s+)?(?:interviews?|participants?|respondents?|employees|users).*?)(?=[.!?]|$)",
+        )) or "Not specified"
+
+    sample = _labelled_value(text, ("Sample definition", "Sample", "Recruitment", "Recruits"))
+    if not sample:
+        sample = _first_match(text, (
+            r"\b(\d[\d,]*\s+(?:in-depth\s+)?(?:interviews?|participants?|respondents?|employees|users).*?)(?=[.!?]|$)",
+            r"\b(?:survey|interviews?|focus groups?|communities)\s+(?:of|with)\s+(.+?)(?=[.!?]|$)",
+        )) or audience
+
+    fieldwork = _labelled_value(text, ("Fieldwork locations", "Fieldwork", "Research locations"))
+    if not fieldwork:
+        fieldwork = _first_match(text, (
+            r"\b(?:fieldwork|research)\s+(?:will\s+be\s+)?(?:conducted|run|held)?\s*(?:across|in)\s+(.+?)(?=[.!?]|$)",
+            r"\b(?:interviews?|focus groups?|communities|survey)\s+in\s+(.+?)(?=[.!?]|$)",
+        )) or geography
+    if fieldwork.casefold() in {"each market", "all markets", "each country", "all countries"}:
+        fieldwork = geography
+
+    hypotheses = _extract_explicit_hypotheses(text)
+    core_question = _labelled_value(text, ("Core question", "Main question", "Research question"))
+    if not core_question:
+        core_question = objective.rstrip(".?") + "?"
+
+    return {
+        "core_question": core_question,
+        "category": category,
+        "target_audience": audience,
+        "geography": geography,
+        "research_objective": objective,
+        "client_hypotheses": hypotheses,
+        "methodology_hints": methodology,
+        "topic": topic,
+        "sample_definition": sample,
+        "fieldwork_locations": fieldwork,
+        "product_or_service": _labelled_value(text, ("Product or service", "Product", "Service")) if str(mode).lower() == "ux" else "",
+        "user_task": _labelled_value(text, ("User task", "Task", "Journey")) if str(mode).lower() == "ux" else "",
+        "research_mode": "ux" if str(mode).lower() == "ux" else "market",
+    }
 
 
 # Step 1: parse the brief
@@ -63,6 +273,7 @@ Return ONLY valid JSON with exactly these fields:
   "research_objective": "what the researcher wants to discover or validate",
   "client_hypotheses": ["list", "of", "stated", "assumptions", "or", "hypotheses"],
   "methodology_hints": "any methodology mentioned (qual/quant/survey/usability test/etc) or 'Not specified'",
+  "topic": "the specific product, behaviour or decision under study, as a short phrase a participant would use (e.g. 'buying fresh fish at the supermarket', not 'supermarket grocery shopping')",
   "sample_definition": "who will actually be recruited or surveyed, as the brief states it (e.g. 'existing customers aged 25 to 40'), or 'Not specified'",
   "fieldwork_locations": "where fieldwork will happen, as stated (e.g. 'London only'), or 'Not specified'",
   "product_or_service": "for UX briefs: the product, service or interface under study; otherwise ''",
@@ -75,6 +286,8 @@ Return ONLY valid JSON with exactly these fields:
                        required_keys=("core_question", "category", "target_audience", "geography", "client_hypotheses"))
     result["research_mode"] = "ux" if str(mode).lower() == "ux" else "market"
     result.setdefault("sample_definition", "Not specified")
+    if not str(result.get("topic", "")).strip():
+        result["topic"] = result.get("product_or_service") or result.get("category", "this topic")
     result.setdefault("fieldwork_locations", "Not specified")
     return result
 
@@ -90,6 +303,7 @@ Return ONLY valid JSON with this exact structure:
 
     user = f"""Generate 6 natural consumer-style prompts for:{mode_note(parsed)}
 Client hypotheses (at least one prompt must give AI a natural opening to raise EACH of these, without naming it; the rest cover the category broadly): {json.dumps(parsed.get('client_hypotheses', []))}
+Specific topic (use this, not the broad category): {parsed.get('topic', '')}
 Product or service: {parsed.get('product_or_service', '')}
 Category: {parsed.get('category', '')}
 Core question: {parsed.get('core_question', '')}
@@ -108,7 +322,7 @@ def step_query(prompts, parsed, probe_models=None):
     """
     base_system = """You are a helpful assistant. Answer the question naturally and informatively."""
 
-    category = parsed.get('category', 'this topic')
+    category = parsed.get('topic') or parsed.get('category', 'this topic')
     core_q = parsed.get('core_question', '')
 
     if mode_note(parsed):
@@ -155,21 +369,118 @@ def step_query(prompts, parsed, probe_models=None):
             else:
                 persona_responses.append(rec)
 
-    return {"base_responses": responses, "persona_responses": persona_responses,
-            "models": models}
+    expected_per_model = {model: config.PROBE_PROMPT_COUNT + config.PROBE_PERSONA_COUNT for model in models}
+    collected_per_model = {
+        model: sum(1 for item in responses + persona_responses if item.get("model") == model)
+        for model in models
+    }
+    return {
+        "base_responses": responses,
+        "persona_responses": persona_responses,
+        "models": models,
+        "expected_answers": sum(expected_per_model.values()),
+        "expected_per_model": expected_per_model,
+        "prompts_used": len(prompts),
+        "prompts_designed": config.PROBE_PROMPT_COUNT,
+        "collected_per_model": collected_per_model,
+    }
+
+
+def answer_coverage(query_data: dict[str, Any]) -> dict[str, Any]:
+    """Return deterministic overall and per-model answer coverage."""
+    answers = query_data.get("base_responses", []) + query_data.get("persona_responses", [])
+    models = list(dict.fromkeys(query_data.get("models", []) or [
+        str(item.get("model") or "unknown") for item in answers
+    ]))
+    observed = {
+        model: sum(1 for item in answers if str(item.get("model") or "unknown") == model)
+        for model in models
+    }
+    supplied_expected = query_data.get("expected_per_model") or {}
+    expected_per_model = {
+        model: int(supplied_expected.get(model, observed.get(model, 0)))
+        for model in models
+    }
+    expected_total = int(query_data.get("expected_answers") or sum(expected_per_model.values()))
+    collected_total = len(answers)
+    overall_ratio = collected_total / expected_total if expected_total else 0.0
+    per_model = {}
+    reasons = []
+    threshold = config.MIN_ANSWER_COVERAGE
+    if expected_total and overall_ratio < threshold:
+        reasons.append(
+            f"overall answer coverage was {collected_total}/{expected_total} "
+            f"({overall_ratio:.0%}), below the {threshold:.0%} minimum"
+        )
+    for model in models:
+        expected = expected_per_model[model]
+        collected = observed.get(model, 0)
+        ratio = collected / expected if expected else 0.0
+        per_model[model] = {"collected": collected, "expected": expected, "ratio": ratio}
+        if expected and ratio < threshold:
+            reasons.append(
+                f"{model} answer coverage was {collected}/{expected} "
+                f"({ratio:.0%}), below the {threshold:.0%} minimum"
+            )
+    return {
+        "ok": collected_total > 0 and not reasons,
+        "threshold": threshold,
+        "collected": collected_total,
+        "expected": expected_total,
+        "ratio": overall_ratio,
+        "per_model": per_model,
+        "reasons": reasons or (["no probe answers were available"] if not collected_total else []),
+    }
 
 
 # Step 3b: measured convergence
 def step_convergence(parsed, query_data):
     """
     Measure, rather than ask, how often the AI answers contain each client
-    hypothesis. A judge model classifies every answer as 'states', 'hedges'
-    or 'absent' for each hypothesis. Counts are then computed in code.
+    hypothesis. A judge model classifies every answer as main, mentions, disputes
+    or absent for each hypothesis. Counts are computed only for complete responses.
     """
-    hypotheses = [h for h in parsed.get("client_hypotheses", []) if str(h).strip()][:5]
+    hypothesis_records = _hypothesis_records(parsed)
+    measured_records = hypothesis_records[:5]
+    unassessed_records = hypothesis_records[5:]
     answers = query_data.get("base_responses", []) + query_data.get("persona_responses", [])
-    if not hypotheses or not answers:
-        return {"hypotheses": [], "n_answers": len(answers), "models": query_data.get("models", [])}
+    coverage = answer_coverage(query_data)
+    if not hypothesis_records:
+        return {"hypotheses": [], "n_answers": len(answers), "models": query_data.get("models", []),
+                "answer_coverage": coverage}
+    if not answers:
+        insufficient = [{
+            **record, "n_answers": 0, "classification_status": "insufficient_data",
+            "classification_errors": ["no probe answers were available"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in measured_records]
+        unassessed = [{
+            **record, "n_answers": 0, "classification_status": "unassessed",
+            "classification_errors": ["outside the five-hypothesis measurement limit"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in unassessed_records]
+        return {"hypotheses": insufficient + unassessed, "n_answers": 0,
+                "models": query_data.get("models", []), "measurement_limit": 5,
+                "answer_coverage": coverage}
+
+    if not coverage["ok"]:
+        insufficient = [{
+            **record, "n_answers": len(answers), "classification_status": "insufficient_coverage",
+            "classification_errors": coverage["reasons"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in measured_records]
+        unassessed = [{
+            **record, "n_answers": len(answers), "classification_status": "unassessed",
+            "classification_errors": ["outside the five-hypothesis measurement limit"],
+            "main": None, "mentions": None, "disputes": None, "absent": None,
+            "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+        } for record in unassessed_records]
+        return {"hypotheses": insufficient + unassessed, "n_answers": len(answers),
+                "models": query_data.get("models", []), "measurement_limit": 5,
+                "answer_coverage": coverage}
 
     system = """You are a strict content classifier.
 For each numbered AI answer, decide how it treats the given hypothesis:
@@ -185,23 +496,57 @@ Include every answer number exactly once."""
     for i, r in enumerate(answers, 1):
         numbered += f"\n[Answer {i}] ({r.get('model','')})\n{(r.get('response') or '')[:1800]}\n"
 
-    def judge(h):
-        user = f"Hypothesis: {h}\n\nAI answers:{numbered}"
+    def judge(record):
+        hypothesis_id = record["hypothesis_id"]
+        h = record["hypothesis"]
+        user = f"Hypothesis ID: {hypothesis_id}\nHypothesis: {h}\n\nAI answers:{numbered}"
         result = call_json("03b_convergence_judge", system, user, required_keys=("verdicts",), temperature=0)
         verdicts = {}
-        for v in result.get("verdicts", []):
-            try:
-                verdicts[int(v.get("answer"))] = v
-            except Exception:
+        errors = []
+        rows = result.get("verdicts", [])
+        if not isinstance(rows, list):
+            rows = []
+            errors.append("verdicts was not a list")
+        for v in rows:
+            if not isinstance(v, dict):
+                errors.append("classification row was not an object")
                 continue
+            try:
+                answer_number = int(v.get("answer"))
+            except (TypeError, ValueError):
+                errors.append("classification had an invalid answer number")
+                continue
+            verdict = str(v.get("verdict", "")).lower()
+            if answer_number < 1 or answer_number > len(answers):
+                errors.append(f"classification referenced answer {answer_number} out of range")
+            elif answer_number in verdicts:
+                errors.append(f"answer {answer_number} was classified more than once")
+            elif verdict not in {"main", "mentions", "disputes", "absent"}:
+                errors.append(f"answer {answer_number} had invalid verdict {verdict!r}")
+            else:
+                verdicts[answer_number] = v
+        missing = sorted(set(range(1, len(answers) + 1)) - set(verdicts))
+        if missing:
+            errors.append(f"missing classifications for answers {missing}")
+        if len(rows) != len(answers):
+            errors.append(f"expected {len(answers)} classification rows, received {len(rows)}")
+        if errors:
+            return {
+                "hypothesis_id": hypothesis_id,
+                "hypothesis": h,
+                "n_answers": len(answers),
+                "classification_status": "insufficient_data",
+                "classification_errors": errors,
+                "main": None, "mentions": None, "disputes": None, "absent": None,
+                "presence_pct": None, "measured_score": None,
+                "per_model": {}, "quotes": [],
+            }
         per_model = {}
         quotes = []
         counts = {"main": 0, "mentions": 0, "disputes": 0, "absent": 0}
         for i, r in enumerate(answers, 1):
-            v = verdicts.get(i, {})
-            verdict = str(v.get("verdict", "absent")).lower()
-            if verdict not in counts:
-                verdict = "absent"
+            v = verdicts[i]
+            verdict = str(v["verdict"]).lower()
             m = r.get("model", "unknown")
             per_model.setdefault(m, {"main": 0, "mentions": 0, "disputes": 0, "absent": 0, "n": 0})
             per_model[m]["n"] += 1
@@ -217,7 +562,10 @@ Include every answer number exactly once."""
         score = int(round(100 * max(0.0, min(1.0, raw_score))))
         presence = int(round(100 * (counts["main"] + counts["mentions"] + counts["disputes"]) / n)) if n else 0
         return {
+            "hypothesis_id": hypothesis_id,
             "hypothesis": h,
+            "classification_status": "valid",
+            "classification_errors": [],
             "n_answers": n,
             "main": counts["main"],
             "mentions": counts["mentions"],
@@ -230,8 +578,16 @@ Include every answer number exactly once."""
         }
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(judge, hypotheses))
-    out = {"hypotheses": results, "n_answers": len(answers), "models": query_data.get("models", [])}
+        results = list(pool.map(judge, measured_records))
+    results.extend({
+        **record, "n_answers": len(answers), "classification_status": "unassessed",
+        "classification_errors": ["outside the five-hypothesis measurement limit"],
+        "main": None, "mentions": None, "disputes": None, "absent": None,
+        "presence_pct": None, "measured_score": None, "per_model": {}, "quotes": [],
+    } for record in unassessed_records)
+    out = {"hypotheses": results, "n_answers": len(answers),
+           "models": query_data.get("models", []), "measurement_limit": 5,
+           "answer_coverage": coverage}
     log_step("03b_convergence", out)
     return out
 
@@ -280,10 +636,14 @@ def step_gap_analysis(parsed, clusters):
 Compare what AI assumes about a topic versus what the actual research audience needs.
 Also check sample fit: compare who will actually be recruited, and where, against each
 client hypothesis and the stated geography. List a hypothesis in sample_cannot_test ONLY
-when the sample excludes the people it is about by definition (hypothesis about older users,
-sample aged 25 to 40; hypothesis about drop-off, sample of existing customers) or when the
-fieldwork for the relevant method covers only part of the stated geography (interviews in
-the UK only for a UK and Italy study). A sample that is merely skewed or likely biased
+when the sample excludes the people it is about by definition, or when the fieldwork for the
+relevant method covers only part of the stated geography. Check these patterns explicitly:
+- age or segment exclusion: a hypothesis about older users with a sample aged 25 to 40
+- lapsed people: a hypothesis about why people stopped, cancelled, dropped off or buy less,
+  tested only on current customers, loyalty members or people intercepted at the point of sale;
+  those people are still present, while the hypothesis concerns people who are no longer there
+- geography: interviews in one city or country for a national or multi-country claim
+A sample that is merely skewed or likely biased
 ("may over-represent premium buyers") belongs in audience_mismatch, not here. Leave the
 list empty if the sample fits.
 Return ONLY valid JSON with this exact structure:
@@ -386,6 +746,7 @@ Scoring rubric. Use it and cite it:
 A measured count is supplied for each hypothesis: how many of the AI answers state
 it, hedge it, or omit it, and a score computed from that count. Use the measured score
 as the contamination_score. Your job is to explain it, quote the answers, and advise.
+If a hypothesis is marked INSUFFICIENT DATA, do not invent or infer a score.
 Assess the hypotheses in the order given. overall_contamination_level is the band of the
 HIGHEST measured score (0-25 Low, 26-50 Medium, 51-75 High, 76-100 Critical), and
 overall_explanation must not name a different level.
@@ -394,6 +755,7 @@ Return ONLY valid JSON with this exact structure:
   "hypotheses_assessed": [
     {
       "hypothesis": "the client's stated hypothesis",
+      "hypothesis_id": "copy the supplied stable hypothesis_id exactly",
       "contamination_score": 0,
       "score_label": "Low / Medium / High / Critical",
       "explanation": "why this hypothesis does or doesn't match AI consensus, naming the rubric band",
@@ -408,9 +770,11 @@ Return ONLY valid JSON with this exact structure:
   "most_dangerous_assumption": "the single hypothesis most likely to corrupt research findings if left unchallenged"
 }"""
 
-    hypotheses = parsed.get('client_hypotheses', [])
-    if not hypotheses:
-        hypotheses = ["No explicit hypotheses stated - inferred from brief language"]
+    hypothesis_records = _hypothesis_records(parsed)
+    if not hypothesis_records:
+        hypothesis_records = _hypothesis_records({
+            "client_hypotheses": ["No explicit hypotheses stated - inferred from brief language"]
+        })
 
     evidence = ""
     if query_data:
@@ -422,15 +786,22 @@ Return ONLY valid JSON with this exact structure:
     measured_block = ""
     conv_list = (convergence or {}).get("hypotheses", [])
     for c in conv_list:
+        if c.get("classification_status") == "unassessed":
+            measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: UNASSESSED; outside the five-hypothesis measurement limit"
+            continue
+        if c.get("classification_status") != "valid":
+            reason = "; ".join(c.get("classification_errors") or ["classification could not be completed"])
+            measured_block += f"\n- {c['hypothesis_id']} {c['hypothesis']}: INSUFFICIENT DATA; {reason}"
+            continue
         measured_block += (
-            f"\n- {c['hypothesis']}: presented as main cause in {c['main']}/{c['n_answers']} answers, "
+            f"\n- {c['hypothesis_id']} {c['hypothesis']}: presented as main cause in {c['main']}/{c['n_answers']} answers, "
             f"mentioned as one factor in {c['mentions']}/{c['n_answers']}, disputed in {c['disputes']}/{c['n_answers']}, "
             f"absent in {c['absent']}/{c['n_answers']}; measured score {c['measured_score']}/100; "
             f"by model: {json.dumps(c['per_model'])}"
         )
 
     user = f"""
-Client hypotheses (assess in this order): {json.dumps(hypotheses)}
+Client hypotheses (return every hypothesis_id exactly once): {json.dumps(hypothesis_records)}
 Research category: {parsed.get('category', '')}
 Measured convergence across {len(conv_list) and conv_list[0]['n_answers']} AI answers from models {json.dumps((convergence or {}).get('models', []))}:{measured_block or ' none measured'}
 AI dominant assumptions for this category: {json.dumps(clusters.get('dominant_assumptions', []))}
@@ -449,13 +820,39 @@ Score each hypothesis for AI contamination using the rubric (0=completely origin
         if score <= 75: return "High"
         return "Critical"
 
-    # Measured scores override the model's own numbers, matched by order
-    assessed = result.get("hypotheses_assessed", [])
-    for i, h in enumerate(assessed):
-        measured = conv_list[i] if i < len(conv_list) else None
-        if measured:
+    # Join explanations to measurements only by stable ID. Never attach by list position.
+    raw_assessed = result.get("hypotheses_assessed", [])
+    expected_ids = {item["hypothesis_id"] for item in hypothesis_records}
+    explanation_by_id = {}
+    explanation_errors = []
+    for item in raw_assessed if isinstance(raw_assessed, list) else []:
+        hypothesis_id = str(item.get("hypothesis_id") or "") if isinstance(item, dict) else ""
+        if hypothesis_id not in expected_ids:
+            explanation_errors.append(f"unknown hypothesis_id {hypothesis_id!r}")
+        elif hypothesis_id in explanation_by_id:
+            explanation_errors.append(f"duplicate hypothesis_id {hypothesis_id}")
+        else:
+            explanation_by_id[hypothesis_id] = item
+    convergence_by_id = {item.get("hypothesis_id"): item for item in conv_list}
+    assessed = []
+    for record in hypothesis_records:
+        hypothesis_id = record["hypothesis_id"]
+        measured = convergence_by_id.get(hypothesis_id)
+        h = explanation_by_id.get(hypothesis_id, {
+            "hypothesis_id": hypothesis_id,
+            "hypothesis": record["hypothesis"],
+            "explanation": "Explanation unavailable; human review is required.",
+            "evidence_quotes": [],
+            "recommendation": "Do not use this indicator until the missing analysis is rerun.",
+        })
+        if hypothesis_id not in explanation_by_id:
+            explanation_errors.append(f"missing explanation for {hypothesis_id}")
+        h["hypothesis_id"] = hypothesis_id
+        h["hypothesis"] = record["hypothesis"]
+        if measured and measured.get("classification_status") == "valid":
             h["contamination_score"] = measured["measured_score"]
             h["measured"] = True
+            h["classification_status"] = "valid"
             h["responses_matching"] = (
                 f"Main cause in {measured['main']} of {measured['n_answers']} answers, "
                 f"one factor in {measured['mentions']}, disputed in {measured['disputes']}, "
@@ -466,15 +863,30 @@ Score each hypothesis for AI contamination using the rubric (0=completely origin
             if not h.get("evidence_quotes") and measured.get("quotes"):
                 h["evidence_quotes"] = [q["quote"] for q in measured["quotes"]]
         else:
-            try:
-                h["contamination_score"] = int(h.get("contamination_score", 50))
-            except Exception:
-                h["contamination_score"] = 50
+            h["contamination_score"] = None
             h["measured"] = False
+            if measured and measured.get("classification_status") == "unassessed":
+                h["classification_status"] = "unassessed"
+                h["responses_matching"] = "Unassessed: outside the five-hypothesis measurement limit."
+            else:
+                h["classification_status"] = (measured or {}).get("classification_status", "insufficient_data")
+                reasons = "; ".join((measured or {}).get("classification_errors") or [])
+                h["responses_matching"] = (
+                    f"Insufficient data: {reasons}." if reasons
+                    else "Insufficient data: not every answer received exactly one valid classification."
+                )
         h["evidence_quotes"] = [str(q).strip().strip('"').strip("\u201c\u201d") for q in h.get("evidence_quotes", [])]
-        h["score_label"] = band(h["contamination_score"])
-    if assessed:
-        result["overall_contamination_level"] = band(max(h["contamination_score"] for h in assessed))
+        if h["contamination_score"] is not None:
+            h["score_label"] = band(h["contamination_score"])
+        elif h["classification_status"] == "unassessed":
+            h["score_label"] = "Unassessed"
+        else:
+            h["score_label"] = "Insufficient data"
+        assessed.append(h)
+    valid_scores = [h["contamination_score"] for h in assessed if h["contamination_score"] is not None]
+    result["hypotheses_assessed"] = assessed
+    result["explanation_contract_errors"] = explanation_errors
+    result["overall_contamination_level"] = band(max(valid_scores)) if valid_scores else "Insufficient data"
     return result
 
 
@@ -735,7 +1147,7 @@ Return ONLY valid JSON with this exact structure:
   "confidence_label": "Strong (75+) / Adequate (55-74) / Fragile (40-54) / Compromised (below 40); must match the score",
   "headline": "one plain, direct sentence a researcher could say to their client",
   "key_finding": {
-    "statement": "the single most important evidence-based finding for this client, one or two sentences. It must contain a specific figure, a named source, or a concrete country contrast. Phrases like 'vary notably' or 'nuanced' without a specific are not acceptable",
+    "statement": "the single most important evidence-based finding for this client, one or two sentences. It must contain a specific figure, a named source, or a concrete country contrast. Phrases like 'vary notably' or 'nuanced' without a specific are not acceptable. Check the direction: every figure must support the claim beside it (for example, 89% confident indicates high confidence and cannot support a claim of low confidence)",
     "basis": "measured AI consensus | published evidence | both",
     "sources": ["publisher and title of up to three sources that support it"]
   },
@@ -863,6 +1275,8 @@ Write the three deliverables."""
     note = result.get("challenge_note") or {}
     title = str(note.get("title", "")).strip()
     if title:
+        words = title.split()
+        title = " ".join(word.upper() if word.lower().strip(",.:") in ACRONYMS else word for word in words)
         note["title"] = title[0].upper() + title[1:]
     return result
 
@@ -885,16 +1299,120 @@ def _safe_step(fn: Callable[..., Any], fallback: Any, *args: Any, **kwargs: Any)
         return fb
 
 
+def _contamination_fallback(parsed: Parsed, convergence: dict[str, Any], error: str = "The contamination explanation stage failed.") -> dict[str, Any]:
+    """Preserve measured hypotheses if only the explanation stage fails."""
+    assessed = []
+    valid_scores = []
+    measured_by_id = {
+        item.get("hypothesis_id"): item
+        for item in convergence.get("hypotheses", []) or []
+        if item.get("hypothesis_id")
+    }
+    for record in _hypothesis_records(parsed):
+        item = measured_by_id.get(record["hypothesis_id"], {})
+        status = item.get("classification_status") or "insufficient_data"
+        score = item.get("measured_score") if status == "valid" else None
+        if isinstance(score, int) and not isinstance(score, bool):
+            valid_scores.append(score)
+            label = "Low" if score <= 25 else "Medium" if score <= 50 else "High" if score <= 75 else "Critical"
+            responses = (
+                f"{item.get('main', 0)}/{item.get('n_answers', 0)} responses presented this as the main cause; "
+                f"{item.get('mentions', 0)}/{item.get('n_answers', 0)} mentioned it as one factor."
+            )
+        elif status == "unassessed":
+            label = "Unassessed"
+            responses = "Unassessed: outside the five-hypothesis measurement limit."
+        else:
+            label = "Insufficient data"
+            responses = "Insufficient data: the convergence measurement could not be completed."
+        assessed.append({
+            "hypothesis_id": record["hypothesis_id"],
+            "hypothesis": record["hypothesis"],
+            "classification_status": status,
+            "contamination_score": score,
+            "score_label": label,
+            "explanation": "Explanation unavailable: the explanation stage failed. Human review is required.",
+            "explanation_status": "unavailable",
+            "evidence_quotes": [
+                str(quote.get("quote") or "") if isinstance(quote, dict) else str(quote)
+                for quote in item.get("quotes") or []
+            ],
+            "responses_matching": responses,
+            "measured": status == "valid",
+            "per_model": item.get("per_model") or {},
+            "presence_pct": item.get("presence_pct"),
+            "recommendation": "Review the underlying probe answers before using this result.",
+        })
+    highest = max(valid_scores) if valid_scores else None
+    overall = (
+        "Low" if highest is not None and highest <= 25
+        else "Medium" if highest is not None and highest <= 50
+        else "High" if highest is not None and highest <= 75
+        else "Critical" if highest is not None
+        else "Insufficient data"
+    )
+    return {
+        "hypotheses_assessed": assessed,
+        "overall_contamination_level": overall,
+        "overall_explanation": "Measured convergence is preserved, but the explanation stage failed. Human review is required.",
+        "genuinely_original_hypotheses": [],
+        "most_dangerous_assumption": "",
+        "explanation_contract_errors": [error],
+    }
+
+
 def parse_brief(brief: str, mode: str = "market") -> Parsed:
     """Step 1 on its own, so the UI can show the extracted hypotheses for review."""
     start_run_log()
-    return _safe_step(step_parse, {
-        "core_question": "Could not parse", "category": "Unknown",
-        "target_audience": "Unknown", "geography": "Global",
-        "research_objective": "Unknown", "client_hypotheses": [],
-        "methodology_hints": "Not specified", "product_or_service": "", "user_task": "",
-        "research_mode": "ux" if str(mode).lower() == "ux" else "market"
-    }, brief, mode)
+    local = _local_parse_brief(brief, mode)
+    key = str(config.OPENAI_API_KEY or "").strip()
+    key_configured = bool(key and key != "missing-development-key" and not key.startswith("your_"))
+    model_result: Parsed = {}
+    parse_error = ""
+    if key_configured:
+        try:
+            candidate = step_parse(brief, mode)
+            if isinstance(candidate, dict):
+                model_result = candidate
+        except Exception as exc:
+            parse_error = f"{type(exc).__name__}: {exc}"
+            log.warning("step_parse failed; using local extraction: %s", parse_error)
+            log_step("error_step_parse", {"error": parse_error, "fallback": "local_extraction"})
+    else:
+        parse_error = "OpenAI API key is not configured"
+
+    parsed = dict(local)
+    for field in (
+        "core_question", "category", "target_audience", "geography", "research_objective",
+        "methodology_hints", "topic", "sample_definition", "fieldwork_locations",
+        "product_or_service", "user_task",
+    ):
+        value = model_result.get(field)
+        if isinstance(value, str) and value.strip() and value.strip().casefold() not in {"unknown", "not known", "n/a"}:
+            parsed[field] = value.strip()
+    hypotheses = model_result.get("client_hypotheses")
+    if isinstance(hypotheses, list):
+        cleaned = [str(item).strip() for item in hypotheses if str(item).strip()]
+        if cleaned:
+            parsed["client_hypotheses"] = cleaned
+
+    required = ("category", "target_audience", "geography", "client_hypotheses")
+    model_complete = bool(model_result) and all(model_result.get(field) for field in required)
+    if model_complete:
+        parsed["parse_status"] = "model"
+        parsed["parse_warnings"] = []
+    elif model_result:
+        parsed["parse_status"] = "model_with_local_fallback"
+        parsed["parse_warnings"] = ["Some fields were completed from the pasted brief using local extraction. Check them before continuing."]
+    else:
+        parsed["parse_status"] = "local_fallback"
+        parsed["parse_warnings"] = [
+            "AI parsing was unavailable, so these fields were extracted locally from the pasted brief. Check them before continuing."
+        ]
+    if parse_error:
+        parsed["parse_error_type"] = parse_error.split(":", 1)[0]
+    log_step("01_parse_fallback", {"status": parsed["parse_status"], "result": parsed})
+    return parsed
 
 
 def run_brief(
@@ -922,23 +1440,47 @@ def run_brief(
     progress("Reading your brief", 1)
     if isinstance(parsed_override, dict) and parsed_override.get("category"):
         parsed = dict(parsed_override)
+        if not str(parsed.get("topic", "")).strip():
+            parsed["topic"] = parsed.get("product_or_service") or parsed.get("category", "this topic")
         parsed["client_hypotheses"] = [str(h).strip() for h in parsed.get("client_hypotheses", []) if str(h).strip()]
         parsed["research_mode"] = "ux" if str(parsed.get("research_mode", mode)).lower() == "ux" else "market"
         log_step("01_parse", {"result": parsed, "source": "user-reviewed"})
     else:
         parsed = parse_brief(brief, mode)
+    parsed = _attach_hypothesis_ids(parsed)
 
     progress("Working out how people actually ask about this", 2)
-    prompts = _safe_step(step_generate, [], parsed)
+    generated = _safe_step(step_generate, {"prompts": []}, parsed)
+    prompt_generation_error = ""
+    if isinstance(generated, dict):
+        prompts = generated.get("prompts", [])
+        prompt_generation_error = str(generated.get("_error") or "")
+    else:
+        prompts = generated
     if not isinstance(prompts, list):
         prompts = []
     prompts = [str(p).strip() for p in prompts if str(p).strip()][:6]
+    if len(prompts) < config.PROBE_PROMPT_COUNT and not prompt_generation_error:
+        prompt_generation_error = (
+            f"Expected {config.PROBE_PROMPT_COUNT} probe prompts but generated {len(prompts)}."
+        )
     if not prompts:
         prompts = [parsed.get("core_question", "Tell me about this topic")]
+    prompt_generation = {
+        "designed": config.PROBE_PROMPT_COUNT,
+        "used": len(prompts),
+        "error": prompt_generation_error or None,
+    }
 
     progress("Asking AI the same question 10 different ways", 3)
     query_data = _safe_step(step_query, {"base_responses": [], "persona_responses": []}, prompts, parsed, probe_models)
     log_step("03_query", query_data)
+    answers_collected = len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", []))
+    if answers_collected == 0:
+        raise NoModelAnswersError(
+            "No AI answers were returned, so BRIEF stopped without creating a report. "
+            "Check the OpenAI API key, model names, account access and connection, then try again."
+        )
     convergence = _safe_step(step_convergence, {"hypotheses": [], "n_answers": 0, "models": []}, parsed, query_data)
 
     progress("Finding the patterns in what AI says", 4)
@@ -956,11 +1498,15 @@ def run_brief(
     }, parsed, clusters)
 
     progress("Scoring the client's assumptions against AI consensus", 6)
-    contamination = _safe_step(step_hypothesis_contamination, {
-        "hypotheses_assessed": [], "overall_contamination_level": "Unknown",
-        "overall_explanation": "Analysis unavailable",
-        "genuinely_original_hypotheses": [], "most_dangerous_assumption": ""
-    }, parsed, clusters, query_data, convergence)
+    contamination = _safe_step(
+        step_hypothesis_contamination,
+        _contamination_fallback(parsed, convergence),
+        parsed, clusters, query_data, convergence,
+    )
+    if not contamination.get("hypotheses_assessed") and parsed.get("hypothesis_records"):
+        error = str(contamination.get("_error") or "The contamination explanation stage returned no hypotheses.")
+        contamination = _contamination_fallback(parsed, convergence, error)
+        contamination["_error"] = error
 
     progress("Tracing where AI's assumptions come from", 7)
     archaeology = _safe_step(step_assumption_archaeology, {
@@ -992,8 +1538,9 @@ def run_brief(
 
     progress("Scoring overall research design confidence", 11)
     confidence = _safe_step(step_confidence, {
-        "confidence_score": 50, "confidence_label": "Adequate",
-        "headline": "Analysis complete.", "score_rationale": "",
+        "confidence_score": None, "confidence_label": "Insufficient data",
+        "headline": "The research-design review could not be produced.",
+        "score_rationale": "No research-design review indicator was computed. Rerun the analysis before relying on this section.",
         "top_three_risks": [], "what_would_raise_it": ""
     }, parsed, clusters, gaps, temporal_drift, contamination, methodology, archaeology)
 
@@ -1003,22 +1550,48 @@ def run_brief(
     }, parsed, confidence, contamination, gaps, archaeology, methodology)
 
     step_errors = []
+    if prompt_generation_error:
+        step_errors.append({"step": "generate", "error": prompt_generation_error[:300]})
     for name, obj in [("parse", parsed), ("query", query_data), ("convergence", convergence), ("clusters", clusters),
                       ("gaps", gaps), ("drift", temporal_drift), ("contamination", contamination),
                       ("competitors", competitor_intel), ("archaeology", archaeology), ("methodology", methodology),
                       ("confidence", confidence), ("deliverables", deliverables)]:
         if isinstance(obj, dict) and obj.get("_error"):
             step_errors.append({"step": name, "error": str(obj["_error"])[:300]})
+    classification_failures = sum(
+        1 for item in convergence.get("hypotheses", [])
+        if item.get("classification_status") in {"insufficient_data", "insufficient_coverage"}
+    )
+    unassessed_hypotheses = sum(
+        1 for item in convergence.get("hypotheses", [])
+        if item.get("classification_status") == "unassessed"
+    )
+    explanation_contract_errors = contamination.get("explanation_contract_errors", [])
     run_health = {
+        "status": "degraded" if step_errors or classification_failures or explanation_contract_errors else "complete",
+        "prompt_version": config.PROMPT_VERSION,
         "quick_mode": bool(quick),
         "probe_models": probe_models,
-        "answers_collected": len(query_data.get("base_responses", [])) + len(query_data.get("persona_responses", [])),
+        "answers_collected": answers_collected,
+        "prompt_generation": prompt_generation,
+        "answer_coverage": convergence.get("answer_coverage") or answer_coverage(query_data),
         "grounded": bool(archaeology.get("grounded")),
+        "classification_failures": classification_failures,
+        "unassessed_hypotheses": unassessed_hypotheses,
+        "explanation_contract_errors": explanation_contract_errors,
         "step_errors": step_errors,
         "run_log_dir": current_run_dir(),
     }
 
-    return {
+    assurance = brief_assurance(
+        run_health=run_health,
+        convergence=convergence,
+        archaeology=archaeology,
+        confidence=confidence,
+    )
+
+    result = {
+        "assurance": assurance,
         "run_health": run_health,
         "parsed": parsed,
         "prompts": prompts,
@@ -1032,5 +1605,20 @@ def run_brief(
         "archaeology": archaeology,
         "methodology": methodology,
         "confidence": confidence,
-        "deliverables": deliverables
+        "deliverables": deliverables,
     }
+    contract_errors = validate_report(result)
+    if contract_errors:
+        run_health["status"] = "invalid"
+        run_health["contract_errors"] = contract_errors
+        assurance = brief_assurance(
+            run_health=run_health,
+            convergence=convergence,
+            archaeology=archaeology,
+            confidence=confidence,
+        )
+        assurance["assurance_level"] = "limited"
+        result["assurance"] = assurance
+    result["internal_recommendation"] = internal_recommendation(result)
+    result["provenance"] = report_provenance(result)
+    return result

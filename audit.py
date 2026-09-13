@@ -18,8 +18,12 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import config
+from credibility import audit_assurance
+from decision import internal_recommendation
 from agent import UX_MODE_NOTE, parse_brief
 from llm import call_json, log_step, start_run_log
+from rules import audit_instrument
 
 log = logging.getLogger("brief.audit")
 
@@ -206,13 +210,23 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
     progress("Checking coverage of the client hypotheses", 4)
     coverage = assess_coverage(items, parsed_brief, audited, mode) if items else {"hypotheses": [], "missing_questions": []}
 
-    # Merge and score
+    # Merge model judgements with deterministic, versioned rules.
+    rules_by_id = audit_instrument(items)
     merged = []
     counts = {"high": 0, "medium": 0, "low": 0}
     confirms = 0
     for it in items:
         a = audited.get(it["id"], {})
-        issues = [i for i in a.get("issues", []) if isinstance(i, dict) and i.get("type")]
+        model_issues = [dict(i, source=i.get("source", "model_judgement"))
+                        for i in a.get("issues", []) if isinstance(i, dict) and i.get("type")]
+        rule_issues = rules_by_id.get(it["id"], [])
+        seen = set()
+        issues = []
+        for issue in model_issues + rule_issues:
+            key = (issue.get("type"), issue.get("rule_id"), issue.get("explanation"))
+            if key not in seen:
+                seen.add(key)
+                issues.append(issue)
         for i in issues:
             sev = str(i.get("severity", "low")).lower()
             counts[sev if sev in counts else "low"] += 1
@@ -231,6 +245,8 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
     label = "Sound" if score >= 80 else "Needs edits" if score >= 60 else "Rework before fieldwork"
 
     result = {
+        "status": "complete",
+        "prompt_version": config.PROMPT_VERSION,
         "instrument_type": parsed_instrument.get("instrument_type", ""),
         "sections": parsed_instrument.get("sections", []),
         "items": merged,
@@ -247,5 +263,7 @@ def run_audit(instrument_text: str, brief_text: str = "", mode: str = "market", 
             "confirmed_only_hypotheses": [h.get("hypothesis") for h in coverage.get("hypotheses", []) if h.get("coverage") == "confirmed_only"],
         },
     }
+    result["assurance"] = audit_assurance(result, config.PROMPT_VERSION)
+    result["internal_recommendation"] = internal_recommendation(result)
     log_step("D_audit_result", result)
     return result

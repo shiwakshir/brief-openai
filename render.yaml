@@ -2,13 +2,21 @@ services:
   - type: web
     name: brief
     runtime: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --requirement requirements.txt
     startCommand: gunicorn -w 1 --threads 8 --timeout 1000 app:app
+    healthCheckPath: /health/live
     envVars:
+      - key: BRIEF_ENVIRONMENT
+        value: production
+      - key: BRIEF_POLICY_PROFILE
+        value: internal_confidential
+      - key: BRIEF_LOG_RAW_PAYLOADS
+        value: "false"
+      - key: BRIEF_ENABLE_WEB_GROUNDING
+        value: "false"
       - key: OPENAI_API_KEY
         sync: false
       - key: BRIEF_PASSWORD
         sync: false
       - key: PYTHON_VERSION
-        value: 3.12.0
+        value: 3.12.9

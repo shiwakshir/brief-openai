@@ -20,6 +20,7 @@ elements:
 from __future__ import annotations
 
 import io
+import os
 import re
 import time
 from html import escape
@@ -48,7 +49,9 @@ CELL_TONES = [
 ]
 
 
-_UNPRINTABLE = re.compile(r"[\u2500-\u25ff\U0001F000-\U0001FFFF\ufffd]")
+# DejaVu covers the scripts and accented characters normally found in research
+# reports. Remove only glyphs it cannot draw reliably and invisible controls.
+_UNPRINTABLE = re.compile(r"[\U0001F000-\U0001FFFF\ufffd\ufe0f\u200b-\u200f\u2588-\u258f]")
 
 
 def _s(value: Any, limit: int = 4000) -> str:
@@ -142,20 +145,53 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
     comp = data.get("competitor_intel") or {}
     dl = data.get("deliverables") or {}
     health = data.get("run_health") or {}
+    assurance = data.get("assurance") or {}
+    internal = data.get("internal_recommendation") or {}
+    human_review = data.get("human_review") or {}
     clusters = data.get("clusters") or {}
     el: list[tuple] = []
 
     mode = "UX research" if parsed.get("research_mode") == "ux" else "Market research"
-    el.append(("title", "AI contamination report", [
+    confidence_score = conf.get("confidence_score")
+    display_score = confidence_score if isinstance(confidence_score, int) and not isinstance(confidence_score, bool) else "n/a"
+    el.append(("title", "Research quality-assurance review", [
         _s(parsed.get("core_question") or parsed.get("research_objective"), 220),
         f"{mode}  ·  {time.strftime('%d %B %Y')}",
     ]))
-    el.append(("score", conf.get("confidence_score", "n/a"), _s(conf.get("confidence_label")),
-               _score_colour(conf.get("confidence_score")), "Research design confidence, out of 100"))
+    el.append(("score", display_score, _s(conf.get("confidence_label") or "Insufficient data"),
+               _score_colour(confidence_score), "Heuristic research-design review indicator, out of 100"))
+    if internal:
+        tone = "danger" if internal.get("decision") == "hold" else "amber" if internal.get("decision") == "proceed_with_changes" else "accent"
+        detail = _s(internal.get("recommended_action"), 500)
+        reasons = "; ".join(_s(x, 300) for x in internal.get("reasons") or [])
+        el.append(("callout", tone, f"Internal workflow recommendation: {_s(internal.get('label'))}",
+                   detail + (f" Reasons: {reasons}" if reasons else "") + f" {_s(internal.get('notice'), 500)}"))
     if conf.get("headline"):
         el.append(("callout", "neutral", "", _s(conf["headline"])))
     if conf.get("score_rationale"):
         el.append(("p", _s(conf["score_rationale"])))
+    if assurance:
+        notice = _s(assurance.get("metric_notice"), 500)
+        level = _s(assurance.get("assurance_level") or "limited").capitalize()
+        el.append(("callout", "amber", f"{level} assurance · human review required", notice))
+        limitations = [_s(x, 400) for x in assurance.get("limitations", []) if _s(x)]
+        if limitations:
+            el.append(("h", 3, "Limitations"))
+            el.append(("bullets", limitations))
+        decisions = [_s(x, 400) for x in assurance.get("required_reviewer_decisions", []) if _s(x)]
+        if decisions:
+            el.append(("h", 3, "Reviewer sign-off"))
+            el.append(("numbered", decisions))
+
+    if human_review:
+        status = "Complete" if human_review.get("complete") else "Incomplete"
+        el.append(("callout", "neutral", "Researcher adjudication", f"{status}. Reviewer: {_s(human_review.get('reviewer'))}. Reviewed: {_s(human_review.get('reviewed_at'))}."))
+        review_rows = [[_s(x.get("finding_id")), _s(x.get("decision")), _s(x.get("rationale"), 500), _s(x.get("amendment"), 500)]
+                       for x in human_review.get("decisions") or []]
+        if review_rows:
+            el.append(("table", ["Finding", "Decision", "Rationale", "Amendment"], review_rows,
+                       [0.16, 0.14, 0.38, 0.32], None))
+
     if health.get("quick_mode") or health.get("step_errors"):
         note = "Quick mode: one AI model, no web evidence. Scores are indicative. " if health.get("quick_mode") else ""
         if health.get("step_errors"):
@@ -179,7 +215,8 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
 
     el.append(("pagebreak",))
     el.append(("h", 1, "The brief as read"))
-    facts = [("Category", parsed.get("category")), ("Audience", parsed.get("target_audience")),
+    facts = [("Category", parsed.get("category")), ("Specific topic", parsed.get("topic")),
+             ("Audience", parsed.get("target_audience")),
              ("Geography", parsed.get("geography")), ("Objective", parsed.get("research_objective")),
              ("Stated method", parsed.get("methodology_hints")), ("Recruits", parsed.get("sample_definition")),
              ("Fieldwork", parsed.get("fieldwork_locations")), ("Product", parsed.get("product_or_service"))]
@@ -194,7 +231,9 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
         el.append(("p", f"**Overall: {_s(cont['overall_contamination_level'])}.** {_s(cont.get('overall_explanation'))}"))
     assessed = cont.get("hypotheses_assessed") or []
     if assessed:
-        rows = [[_s(h.get("hypothesis"), 240), str(h.get("contamination_score", "")), _s(h.get("score_label")),
+        rows = [[_s(h.get("hypothesis"), 240),
+                 str(h.get("contamination_score")) if h.get("contamination_score") is not None else _s(h.get("score_label"), 40),
+                 _s(h.get("score_label")),
                  _s(h.get("responses_matching"), 200)] for h in assessed]
         el.append(("table", ["Hypothesis", "Score", "Band", "Measured across the AI answers"], rows, [0.40, 0.09, 0.12, 0.39], 2))
         el.append(("small", "Score: a classifier marks each AI answer as presenting the idea as the main cause (1), as one factor "
@@ -343,17 +382,35 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
 
 def build_audit(data: dict[str, Any]) -> list[tuple]:
     sm = data.get("summary") or {}
+    assurance = data.get("assurance") or {}
+    human_review = data.get("human_review") or {}
+    internal = data.get("internal_recommendation") or {}
     items = data.get("items") or []
     cov = data.get("coverage") or {}
     el: list[tuple] = []
     el.append(("title", "Guide and questionnaire audit", [
         f"{_s(data.get('instrument_type', 'instrument')).capitalize()}  ·  {sm.get('items_total', 0)} items  ·  {time.strftime('%d %B %Y')}",
     ]))
-    el.append(("score", sm.get("score", "n/a"), _s(sm.get("label")), _score_colour(sm.get("score")), "Wording score, out of 100"))
+    el.append(("score", sm.get("score", "n/a"), _s(sm.get("label")), _score_colour(sm.get("score")), "Heuristic wording-review indicator, out of 100"))
+    if internal:
+        tone = "danger" if internal.get("decision") == "hold" else "amber" if internal.get("decision") == "proceed_with_changes" else "accent"
+        detail = _s(internal.get("recommended_action"), 500)
+        reasons = "; ".join(_s(x, 300) for x in internal.get("reasons") or [])
+        el.append(("callout", tone, f"Internal workflow recommendation: {_s(internal.get('label'))}",
+                   detail + (f" Reasons: {reasons}" if reasons else "") + f" {_s(internal.get('notice'), 500)}"))
     el.append(("p", f"{sm.get('items_flagged', 0)} of {sm.get('items_total', 0)} items flagged: {sm.get('high', 0)} high, "
                     f"{sm.get('medium', 0)} medium, {sm.get('low', 0)} low. {sm.get('items_confirming', 0)} restate a client hypothesis."))
     el.append(("small", "Score starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short "
                         "instruments. It measures wording, not study design."))
+    if human_review:
+        status = "Complete" if human_review.get("complete") else "Incomplete"
+        el.append(("callout", "neutral", "Researcher adjudication", f"{status}. Reviewer: {_s(human_review.get('reviewer'))}. Reviewed: {_s(human_review.get('reviewed_at'))}."))
+        review_rows = [[_s(x.get("finding_id")), _s(x.get("decision")), _s(x.get("rationale"), 500), _s(x.get("amendment"), 500)]
+                       for x in human_review.get("decisions") or []]
+        if review_rows:
+            el.append(("table", ["Finding", "Decision", "Rationale", "Amendment"], review_rows,
+                       [0.16, 0.14, 0.38, 0.32], None))
+
     worst = [i for i in items if any(x.get("severity") == "high" for x in i.get("issues") or [])][:3]
     if worst:
         el.append(("callout", "danger", "Fix these first", " ".join(
@@ -416,10 +473,51 @@ def _runs(text: str) -> Iterator[tuple[str, bool, bool]]:
         yield text[pos:], False, False
 
 
+_CJK = re.compile(r"[\u2e80-\u2fdf\u3000-\u30ff\u3100-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]+")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffe\uffff]")
+_cjk_fonts_ready = False
+_CJK_EMBEDDED = False
+
+
+def _register_cjk_fonts() -> None:
+    """Register the bundled CJK font, with ReportLab CID fonts as a fallback."""
+    global _cjk_fonts_ready, _CJK_EMBEDDED
+    if _cjk_fonts_ready:
+        return
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    droid = os.path.join(FONT_DIR, "DroidSansFallback.ttf")
+    if os.path.exists(droid):
+        if "DroidSansFallback" not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont("DroidSansFallback", droid))
+        _CJK_EMBEDDED = True
+    else:
+        for name in ("STSong-Light", "HeiseiMin-W3", "HYSMyeongJo-Medium"):
+            if name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(UnicodeCIDFont(name))
+    _cjk_fonts_ready = True
+
+
+def _cjk_font_for(chunk: str) -> str:
+    if _CJK_EMBEDDED:
+        return "DroidSansFallback"
+    if re.search(r"[\u3040-\u30ff]", chunk):
+        return "HeiseiMin-W3"
+    if re.search(r"[\uac00-\ud7af]", chunk):
+        return "HYSMyeongJo-Medium"
+    return "STSong-Light"
+
+
+def _with_cjk_fonts(escaped: str) -> str:
+    return _CJK.sub(lambda match: f'<font name="{_cjk_font_for(match.group(0))}">{match.group(0)}</font>', escaped)
+
+
 def _pdf_markup(text: str) -> str:
     out = []
-    for chunk, bold, italic in _runs(text):
-        piece = escape(chunk)
+    for chunk, bold, italic in _runs(_CONTROL.sub("", text)):
+        piece = _with_cjk_fonts(escape(chunk))
         if bold:
             piece = f"<b>{piece}</b>"
         if italic:
@@ -431,6 +529,34 @@ def _pdf_markup(text: str) -> str:
 # ---------------------------------------------------------------------------
 # PDF renderer
 # ---------------------------------------------------------------------------
+
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "fonts")
+
+
+def _register_fonts() -> tuple[str, str]:
+    """Embed a broad Unicode font, falling back safely if assets are absent."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.pdfmetrics import registerFontFamily
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    regular = os.path.join(FONT_DIR, "DejaVuSans.ttf")
+    bold = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+    oblique = os.path.join(FONT_DIR, "DejaVuSans-Oblique.ttf")
+    if not (os.path.exists(regular) and os.path.exists(bold)):
+        return "Helvetica", "Helvetica-Bold"
+    if "DejaVuSans" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("DejaVuSans", regular))
+        pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", bold))
+        if os.path.exists(oblique):
+            pdfmetrics.registerFont(TTFont("DejaVuSans-Oblique", oblique))
+        registerFontFamily(
+            "DejaVuSans",
+            normal="DejaVuSans",
+            bold="DejaVuSans-Bold",
+            italic="DejaVuSans-Oblique" if os.path.exists(oblique) else "DejaVuSans",
+            boldItalic="DejaVuSans-Bold",
+        )
+    return "DejaVuSans", "DejaVuSans-Bold"
 
 def render_pdf(elements: list[tuple], title: str) -> bytes:
     from reportlab.lib import colors
@@ -444,18 +570,20 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
     def hexc(h: str):
         return colors.HexColor("#" + h)
 
-    body = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, leading=13.5, textColor=hexc(INK), spaceAfter=6, alignment=TA_LEFT)
+    font, font_bold = _register_fonts()
+    _register_cjk_fonts()
+    body = ParagraphStyle("body", fontName=font, fontSize=9.5, leading=13.5, textColor=hexc(INK), spaceAfter=6, alignment=TA_LEFT)
     small = ParagraphStyle("small", parent=body, fontSize=8, leading=11, textColor=hexc(INK2), spaceAfter=4)
     cell = ParagraphStyle("cell", parent=body, fontSize=8.5, leading=11.5, spaceAfter=0)
-    cell_head = ParagraphStyle("cellhead", parent=cell, fontName="Helvetica-Bold", textColor=hexc(ACCENT), fontSize=7.5)
+    cell_head = ParagraphStyle("cellhead", parent=cell, fontName=font_bold, textColor=hexc(ACCENT), fontSize=7.5)
     headings = {
-        1: ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=17, leading=21, textColor=hexc(INK), spaceBefore=14, spaceAfter=8),
-        2: ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=13, leading=17, textColor=hexc(ACCENT), spaceBefore=12, spaceAfter=5),
-        3: ParagraphStyle("h3", fontName="Helvetica-Bold", fontSize=10.5, leading=14, textColor=hexc(INK), spaceBefore=9, spaceAfter=3),
+        1: ParagraphStyle("h1", fontName=font_bold, fontSize=17, leading=21, textColor=hexc(INK), spaceBefore=14, spaceAfter=8),
+        2: ParagraphStyle("h2", fontName=font_bold, fontSize=13, leading=17, textColor=hexc(ACCENT), spaceBefore=12, spaceAfter=5),
+        3: ParagraphStyle("h3", fontName=font_bold, fontSize=10.5, leading=14, textColor=hexc(INK), spaceBefore=9, spaceAfter=3),
     }
-    title_style = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=26, leading=30, textColor=hexc(INK), spaceAfter=6)
+    title_style = ParagraphStyle("title", fontName=font_bold, fontSize=26, leading=30, textColor=hexc(INK), spaceAfter=6)
     subtitle = ParagraphStyle("subtitle", parent=body, fontSize=10.5, leading=15, textColor=hexc(INK2))
-    eyebrow = ParagraphStyle("eyebrow", parent=small, fontName="Helvetica-Bold", textColor=hexc(ACCENT), fontSize=8)
+    eyebrow = ParagraphStyle("eyebrow", parent=small, fontName=font_bold, textColor=hexc(ACCENT), fontSize=8)
     width = A4[0] - 36 * mm
     pad = [("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]
@@ -527,7 +655,7 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
             items = [ListItem(Paragraph(_pdf_markup(x), cell), leftIndent=14) for x in e[1] if x]
             if items:
                 if kind == "numbered":
-                    story.append(ListFlowable(items, bulletType="1", leftIndent=14, bulletFontName="Helvetica-Bold",
+                    story.append(ListFlowable(items, bulletType="1", leftIndent=14, bulletFontName=font_bold,
                                               bulletFontSize=9, bulletColor=hexc(ACCENT)))
                 else:
                     story.append(ListFlowable(items, bulletType="bullet", start="\u2022", leftIndent=14,
@@ -540,7 +668,7 @@ def render_pdf(elements: list[tuple], title: str) -> bytes:
         canvas.saveState()
         canvas.setStrokeColor(hexc(BORDER))
         canvas.line(18 * mm, 16 * mm, A4[0] - 18 * mm, 16 * mm)
-        canvas.setFont("Helvetica", 7.5)
+        canvas.setFont(font, 7.5)
         canvas.setFillColor(hexc(MUTED))
         canvas.drawString(18 * mm, 11 * mm, f"{title}  ·  Generated by BRIEF")
         canvas.drawRightString(A4[0] - 18 * mm, 11 * mm, f"Page {doc.page}")
@@ -742,7 +870,7 @@ def export_document(kind: str, data: dict[str, Any], fmt: str) -> tuple[bytes, s
     if kind == "audit":
         elements, title = build_audit(data), "BRIEF guide and questionnaire audit"
     else:
-        elements, title = build_report(data), "BRIEF AI contamination report"
+        elements, title = build_report(data), "BRIEF research quality-assurance review"
     if fmt == "pdf":
         return render_pdf(elements, title), "application/pdf", "pdf"
     if fmt == "docx":

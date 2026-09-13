@@ -1,145 +1,233 @@
-"""
-Evaluate BRIEF against a test set of briefs with planted biases.
-
-Usage:
-    python evaluate.py                # run all briefs in tests/briefs.json
-    python evaluate.py bank-budgeting # run one brief by id
-    python evaluate.py --dry          # list the briefs and expectations, no API calls
-    python evaluate.py --quick        # one probe model, no web grounding (cheap smoke test)
-
-For each brief the script:
-  1. runs the full pipeline,
-  2. flattens the report to text,
-  3. checks each expected flag group (a group passes if ANY of its phrases appears),
-  4. checks that each expected high-contamination hypothesis scored over 50,
-  5. writes a scorecard to tests/results/<timestamp>.json and prints a summary.
-
-A change to the tool is an improvement only if this score goes up.
-"""
+"""Run BRIEF against labelled synthetic cases and enforce quality thresholds."""
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
-import sys
+import re
 import time
 from typing import Any
 
-TESTS_PATH = os.path.join("tests", "briefs.json")
-RESULTS_DIR = os.path.join("tests", "results")
+CASES_PATH = os.path.join("evals", "labelled_cases.json")
+SYNTHETIC_CASES_PATH = os.path.join("evals", "synthetic_research_cases.json")
+RESULTS_DIR = os.path.join("evals", "results")
+
+# Only these model-produced analytical fields are scored. Submitted brief text,
+# parsed fields, hypothesis wording, IDs and raw probe answers are excluded by construction.
+ANALYTICAL_FIELDS = (
+    ("key_finding", "confidence.headline"),
+    ("key_finding", "confidence.score_rationale"),
+    ("key_finding", "confidence.key_finding.statement"),
+    ("risk_to_fieldwork", "confidence.top_three_risks[]"),
+    ("risk_to_fieldwork", "confidence.what_would_raise_it"),
+    ("sample_fit", "gaps.audience_mismatch"),
+    ("sample_fit", "gaps.overrepresented[].explanation"),
+    ("sample_fit", "gaps.underrepresented[].explanation"),
+    ("sample_fit", "gaps.unknown_unknowns[]"),
+    ("sample_fit", "gaps.sample_cannot_test[].why"),
+    ("convergence_analysis", "contamination.overall_explanation"),
+    ("convergence_analysis", "contamination.hypotheses_assessed[].explanation"),
+    ("convergence_analysis", "contamination.hypotheses_assessed[].recommendation"),
+    ("source_landscape", "archaeology.hypothesis_evidence[].summary"),
+    ("source_landscape", "archaeology.hypothesis_evidence[].countries[].for[].finding"),
+    ("source_landscape", "archaeology.hypothesis_evidence[].countries[].against[].finding"),
+    ("source_landscape", "archaeology.dominant_narrative_origin"),
+    ("source_landscape", "archaeology.implication_for_research"),
+    ("temporal_drift", "temporal_drift.drift_explanation"),
+    ("temporal_drift", "temporal_drift.stale_assumptions[].why_stale"),
+    ("temporal_drift", "temporal_drift.stale_assumptions[].research_implication"),
+    ("competitor_intel", "competitor_intel.discussion_guide_implication"),
+    ("methodology", "methodology.method_fit.reason"),
+    ("methodology", "methodology.method_fit.scope_and_cost_note"),
+    ("methodology", "methodology.recommended_approach"),
+    ("methodology", "methodology.sample_design_notes"),
+    ("methodology", "methodology.hypothesis_tests[].how_to_test_it"),
+    ("methodology", "methodology.hypothesis_tests[].what_would_refute_it"),
+    ("deliverables", "deliverables.challenge_note.opening"),
+    ("deliverables", "deliverables.challenge_note.what_we_found"),
+    ("deliverables", "deliverables.challenge_note.what_we_recommend"),
+    ("deliverables", "deliverables.screener_criteria[].why"),
+)
 
 
-def flatten(obj: Any) -> str:
-    """Turn the nested result dict into one lowercase string for phrase checks."""
-    parts = []
-
-    def walk(x):
-        if isinstance(x, dict):
-            for k, v in x.items():
-                if k in ("query_data",):
-                    continue  # the raw AI answers are not the tool's findings
-                walk(v)
-        elif isinstance(x, list):
-            for v in x:
-                walk(v)
-        elif x is not None:
-            parts.append(str(x))
-
-    walk(obj)
-    return "\n".join(parts).lower()
+def _walk(obj: Any, segments: list[str]) -> list[str]:
+    if not segments:
+        return [obj] if isinstance(obj, str) else []
+    head, rest = segments[0], segments[1:]
+    if head.endswith("[]"):
+        values = obj.get(head[:-2]) if isinstance(obj, dict) else None
+        if not isinstance(values, list):
+            return []
+        return [text for value in values for text in _walk(value, rest)]
+    if not isinstance(obj, dict):
+        return []
+    return _walk(obj.get(head), rest)
 
 
-def check(brief_case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    text = flatten(result)
-    flag_results = []
-    for group in brief_case.get("expect_any", []):
-        hit = next((p for p in group if p.lower() in text), None)
-        flag_results.append({"group": group, "hit": hit, "passed": hit is not None})
+def _normalise(text: str) -> str:
+    return re.sub(r"[\W_]+", " ", text.lower(), flags=re.UNICODE)
 
-    contamination_results = []
-    assessed = result.get("contamination", {}).get("hypotheses_assessed", [])
-    for phrase in brief_case.get("expect_high_contamination", []):
-        match = next((h for h in assessed if phrase.lower() in str(h.get("hypothesis", "")).lower()), None)
+
+def explicit_findings(result: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract analysis outputs only; never search parsed brief or client hypotheses."""
+    return [
+        {"category": category, "text": _normalise(text)}
+        for category, path in ANALYTICAL_FIELDS
+        for text in _walk(result, path.split("."))
+        if text.strip()
+    ]
+
+
+def _matches(expectation: dict[str, Any], findings: list[dict[str, str]]) -> str | None:
+    raw_phrases = [str(p) for p in expectation.get("phrases", [])]
+    wildcard = "*" in raw_phrases
+    phrases = [_normalise(phrase).strip() for phrase in raw_phrases if phrase != "*"]
+    phrases = [phrase for phrase in phrases if phrase]
+    category = str(expectation.get("category") or "")
+    for finding in findings:
+        if category == "any_analysis" or finding["category"] == category:
+            if wildcard:
+                return "*"
+            hit = next((phrase for phrase in phrases if phrase in finding["text"]), None)
+            if hit:
+                return hit
+    return None
+
+
+def check(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    findings = explicit_findings(result)
+    expected = []
+    forbidden = []
+    expected_labels = case.get("expected_findings") or [
+        {"category": "any_analysis", "phrases": group} for group in case.get("expect_any", [])
+    ]
+    forbidden_labels = case.get("forbidden_findings") or [
+        {"category": "any_analysis", "phrases": [phrase]} for phrase in case.get("expect_none", [])
+    ]
+    for label in expected_labels:
+        hit = _matches(label, findings)
+        expected.append({**label, "hit": hit, "passed": hit is not None})
+    for label in forbidden_labels:
+        hit = _matches(label, findings)
+        forbidden.append({**label, "hit": hit, "passed": hit is None})
+    assessed = (result.get("contamination") or {}).get("hypotheses_assessed") or []
+    contamination = []
+    for label in case.get("expected_high_convergence", case.get("expect_high_contamination", [])):
+        match = next((item for item in assessed if label.lower() in str(item.get("hypothesis", "")).lower()), None)
         score = match.get("contamination_score") if match else None
-        contamination_results.append({
-            "phrase": phrase,
-            "found_hypothesis": bool(match),
-            "score": score,
-            "passed": bool(match) and isinstance(score, int) and score > 50,
-        })
+        contamination.append({"label": label, "score": score,
+                              "passed": isinstance(score, int) and not isinstance(score, bool) and score > 50})
+    structural = []
+    if "expect_unassessed" in case:
+        expected_count = int(case["expect_unassessed"])
+        actual_count = int((result.get("run_health") or {}).get("unassessed_hypotheses") or 0)
+        structural.append({"check": "unassessed_hypotheses", "expected": expected_count,
+                           "actual": actual_count, "passed": actual_count == expected_count})
+    if "expect_hypotheses_preserved" in case:
+        expected_count = int(case["expect_hypotheses_preserved"])
+        actual_count = len(assessed)
+        structural.append({"check": "hypotheses_preserved", "expected": expected_count,
+                           "actual": actual_count, "passed": actual_count == expected_count})
+    return {"id": case["id"], "expected": expected, "forbidden": forbidden,
+            "contamination": contamination, "structural": structural,
+            "step_errors": (result.get("run_health") or {}).get("step_errors", [])}
 
-    errors = [k for k, v in result.items() if isinstance(v, dict) and v.get("_error")]
-    return {
-        "id": brief_case["id"],
-        "flags": flag_results,
-        "contamination": contamination_results,
-        "step_errors": errors,
-        "confidence_score": result.get("confidence", {}).get("confidence_score"),
-        "grounded": result.get("archaeology", {}).get("grounded", False),
-        "generic_rejected": len(result.get("methodology", {}).get("rejected_as_generic", [])),
-    }
+
+def metrics(cards: list[dict[str, Any]]) -> dict[str, float | int]:
+    tp = sum(item["passed"] for card in cards for item in card["expected"])
+    fn = sum(not item["passed"] for card in cards for item in card["expected"])
+    fp = sum(not item["passed"] for card in cards for item in card["forbidden"])
+    cont_pass = sum(item["passed"] for card in cards for item in card["contamination"])
+    cont_total = sum(len(card["contamination"]) for card in cards)
+    structural_pass = sum(item["passed"] for card in cards for item in card.get("structural", []))
+    structural_total = sum(len(card.get("structural", [])) for card in cards)
+    precision = tp / (tp + fp) if tp + fp else 1.0
+    recall = tp / (tp + fn) if tp + fn else 1.0
+    return {"true_positives": tp, "false_positives": fp, "false_negatives": fn,
+            "precision": precision, "recall": recall,
+            "convergence_passed": cont_pass, "convergence_total": cont_total,
+            "structural_passed": structural_pass, "structural_total": structural_total,
+            "step_errors": sum(len(card["step_errors"]) for card in cards)}
 
 
-def main() -> None:
-    with open(TESTS_PATH, encoding="utf-8") as f:
-        cases = json.load(f)
+def thresholds_pass(summary: dict[str, Any], min_precision: float, min_recall: float) -> bool:
+    return (summary["precision"] >= min_precision and summary["recall"] >= min_recall
+            and summary["convergence_passed"] == summary["convergence_total"]
+            and summary.get("structural_passed", 0) == summary.get("structural_total", 0)
+            and summary["step_errors"] == 0)
 
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    dry = "--dry" in sys.argv
-    quick = "--quick" in sys.argv
-    if args:
-        cases = [c for c in cases if c["id"] in args]
 
-    if dry:
-        for c in cases:
-            print(f"{c['id']}: {len(c['expect_any'])} flag groups, "
-                  f"{len(c.get('expect_high_contamination', []))} contamination checks")
-        return
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ids", nargs="*")
+    parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--dry", action="store_true")
+    parser.add_argument("--validate-dataset", action="store_true")
+    parser.add_argument("--min-precision", type=float, default=.80)
+    parser.add_argument("--min-recall", type=float, default=.80)
+    args = parser.parse_args()
+    cases = []
+    for path in (CASES_PATH, SYNTHETIC_CASES_PATH):
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as handle:
+                cases.extend(json.load(handle))
+    if not isinstance(cases, list) or not cases:
+        raise SystemExit("Evaluation dataset must contain cases")
+    structural_keys = ("expect_unassessed", "expect_hypotheses_preserved")
+    for case in cases:
+        has_expectation = (
+            case.get("expected_findings") or case.get("expect_any")
+            or case.get("forbidden_findings") or case.get("expect_none")
+            or case.get("expected_high_convergence") or case.get("expect_high_contamination")
+            or any(key in case for key in structural_keys)
+        )
+        if not has_expectation:
+            raise SystemExit(f"Case {case.get('id', '<unknown>')} has no expectations")
+        for label in case.get("forbidden_findings", []):
+            if "*" in [str(phrase) for phrase in label.get("phrases", [])]:
+                raise SystemExit(f"Case {case.get('id', '<unknown>')} uses a wildcard forbidden expectation")
+    if not any(case.get("expected_findings") or case.get("expect_any") for case in cases):
+        raise SystemExit("Evaluation dataset needs positive labelled expectations")
+    if not any(case.get("forbidden_findings") or case.get("expect_none") for case in cases):
+        raise SystemExit("Evaluation dataset needs clean/negative labelled expectations")
+    for case in cases:
+        if not case.get("id") or not case.get("brief"):
+            raise SystemExit("Every evaluation case needs an id and brief")
+        labels = case.get("expected_findings", []) + case.get("forbidden_findings", [])
+        for label in labels:
+            if not label.get("category") or not label.get("phrases"):
+                raise SystemExit(f"Case {case['id']} has an incomplete expectation")
+        for group in case.get("expect_any", []):
+            if not isinstance(group, list) or not group:
+                raise SystemExit(f"Case {case['id']} has an incomplete expectation")
+        for key in structural_keys:
+            if key in case and (not isinstance(case[key], int) or case[key] < 0):
+                raise SystemExit(f"Case {case['id']} has an invalid structural expectation")
+    if args.ids:
+        cases = [case for case in cases if case["id"] in args.ids]
+    if not cases:
+        raise SystemExit("No matching evaluation cases")
+    if args.dry or args.validate_dataset:
+        clean_count = sum(bool(c.get("forbidden_findings") or c.get("expect_none")) for c in cases)
+        print(f"Validated {len(cases)} labelled cases, including {clean_count} clean/negative cases.")
+        return 0
 
-    from agent import run_brief  # imported here so --dry needs no API key
-
+    from agent import run_brief
+    cards = []
+    for case in cases:
+        result = run_brief(case["brief"], mode=case.get("mode", "market"), quick=args.quick)
+        cards.append(check(case, result))
+    summary = metrics(cards)
+    summary["cards"] = cards
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    scorecards = []
-    for c in cases:
-        print(f"\n=== {c['id']} ===")
-        start = time.time()
-        result = run_brief(c["brief"], progress_callback=lambda n, i, t: print(f"  {i}/{t} {n}"),
-                           mode=c.get("mode", "market"), quick=quick)
-        card = check(c, result)
-        card["seconds"] = round(time.time() - start)
-        scorecards.append(card)
-        for fr in card["flags"]:
-            mark = "PASS" if fr["passed"] else "MISS"
-            print(f"  [{mark}] {fr['group'][0]} ... -> {fr['hit']}")
-        for cr in card["contamination"]:
-            mark = "PASS" if cr["passed"] else "MISS"
-            print(f"  [{mark}] contamination '{cr['phrase']}' scored {cr['score']}")
-        if card["step_errors"]:
-            print(f"  step errors: {card['step_errors']}")
-
-    total_flags = sum(len(s["flags"]) for s in scorecards)
-    passed_flags = sum(1 for s in scorecards for f in s["flags"] if f["passed"])
-    total_cont = sum(len(s["contamination"]) for s in scorecards)
-    passed_cont = sum(1 for s in scorecards for f in s["contamination"] if f["passed"])
-
-    summary = {
-        "run_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "quick": quick,
-        "briefs": len(scorecards),
-        "flags_passed": f"{passed_flags}/{total_flags}",
-        "contamination_passed": f"{passed_cont}/{total_cont}",
-        "step_errors": sum(len(s["step_errors"]) for s in scorecards),
-        "cards": scorecards,
-    }
-    out_path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d-%H%M%S") + ".json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-
-    print(f"\nFlags caught: {summary['flags_passed']}   "
-          f"High-contamination hypotheses caught: {summary['contamination_passed']}   "
-          f"Step errors: {summary['step_errors']}")
-    print(f"Scorecard written to {out_path}")
+    path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d-%H%M%S") + ".json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, ensure_ascii=False)
+    passed = thresholds_pass(summary, args.min_precision, args.min_recall)
+    print(f"Precision {summary['precision']:.1%}; recall {summary['recall']:.1%}; threshold {'PASS' if passed else 'FAIL'}")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

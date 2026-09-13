@@ -1,8 +1,11 @@
 # BRIEF
 
+> **Deployment status:** pilot hardening is in progress. Use only behind organisational access controls, with approved low-sensitivity data. Raw payload logging and web grounding are disabled by default. See [the deployment baseline](docs/DEPLOYMENT.md) and [security policy](SECURITY.md).
+
+
 ### Bias & Research Intelligence Evaluation Framework
 
-**Two tools for researchers: one audits what AI already assumes about a research brief before fieldwork begins; the other audits a discussion guide or questionnaire for questions that would confirm rather than test.**
+**An internal research-intelligence workspace with two tools: one audits what AI already assumes about a research brief before fieldwork begins; the other audits a discussion guide or questionnaire for questions that would confirm rather than test.**
 
 BRIEF was first built for the Microsoft Agents League hackathon (Reasoning Agents track) on Microsoft Foundry, where it won the Hack for Good award. This version runs on the OpenAI API only: one API key, no Azure subscription. It has since been extended well beyond the hackathon build; see "What changed since the hackathon" at the end.
 
@@ -22,9 +25,9 @@ BRIEF maps it, before the money is spent.
 
 ### Tool 1: audit a brief
 
-Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF reads it, shows you the hypotheses it found so you can correct them, then runs twelve agents and produces a report with:
+Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF reads it, shows you the hypotheses it found so you can correct them, then runs twelve analysis stages and produces an advisory report with:
 
-- **A research design confidence score** (0 to 100) for the study as the brief states it, with the label computed from the score
+- **A heuristic research-design review indicator** (0 to 100) for the study as the brief states it, with the label computed from the score
 - **A key finding** backed by a named published source or a measured count
 - **Sample fit**: hypotheses the stated sample or fieldwork location cannot test, which caps the score at 50
 - **Hypothesis contamination**: a measured score for each client hypothesis, computed from how two AI models answer twenty consumer-style questions, with the verbatim quotes behind it
@@ -35,6 +38,8 @@ Paste a research brief, or upload the RFP, client email or kick-off deck. BRIEF 
 - **Methodology**: whether to keep, adjust or change the method in the brief and what that costs, plus how to test each hypothesis and what finding should make the client drop it
 - **Paste-ready outputs**: a client challenge note, discussion guide probes per hypothesis, screener criteria, and in UX mode, usability task scenarios
 - **An appendix** of every AI answer the scores were computed from
+- **An internal workflow recommendation**: proceed to research planning, proceed after changes, or hold before fieldwork, with the deterministic reasons shown separately from the score
+- **Researcher sign-off**: accept, reject or amend material findings and record the rationale before relying on the result
 
 ### Tool 2: audit a guide or questionnaire
 
@@ -46,12 +51,26 @@ Paste or upload a discussion guide, interview script, survey or usability test p
 
 ### Exports
 
-Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: cover with score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, appendix of AI answers. Filenames carry the category and a timestamp.
+Word (.docx), PDF and Markdown, for both tools. Word and PDF are designed documents built from the structured results: internal recommendation and score, boxed key finding and sample-fit warnings, tables for hypotheses, evidence, methods, tasks and screener, and an appendix of AI answers. Filenames carry the category and a timestamp.
+
+PDF exports embed DejaVu Sans for Latin, Greek and Cyrillic and Droid Sans Fallback for Chinese, Japanese and Korean text, so multilingual research text is retained without relying on fonts installed on the host machine. Font licence notices are included in `static/fonts/`.
+
+### Interface
+
+The browser interface is designed as a supervised internal workspace rather than a client-facing report portal:
+
+- The landing page states the internal quality-assurance purpose plainly and moves directly into the chosen audit workflow.
+- Brief and guide audits share one clearly separated tool switch, while Market research and UX research remain available within each workflow.
+- Results lead with the internal workflow recommendation, followed by its reasons, review status, assurance limitations and the underlying research-design indicator.
+- The full evidence trail, raw AI answers, paste-ready outputs and researcher sign-off remain available through the results navigation.
+- Light and dark themes, visible keyboard focus, labelled controls and responsive layouts support laptop, tablet and mobile use.
+
+The interface deliberately distinguishes **recommendation**, **score**, **evidence** and **human review**. A polished presentation does not make any of them validated truth.
 
 ---
 
 
-An orchestrator (`run_brief` in `agent.py`) passes state through twelve agents. Each has one job, its own instructions and a JSON output contract that is checked before the next agent runs.
+An orchestrator (`run_brief` in `agent.py`) passes state through twelve model-assisted analysis stages. These stages are not independent experts: they share upstream outputs and may share training-data patterns. Each stage has a scoped instruction and output contract.
 
 ```
 Research brief
@@ -81,13 +100,17 @@ Each agent runs inside its own error recovery. If one fails it records the failu
 
 ---
 
-## How the scores are measured
+## Methodological status
 
-**Contamination scores are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it.
+BRIEF is an internal research quality-assurance assistant, not an external client deliverable or organisational approval system. It automatically recommends whether an internal project should proceed to research planning, proceed after changes, or pause before fieldwork. The recommendation follows deterministic quality gates; its numerical outputs remain heuristic review indicators, not validated measures of bias, contamination, truth, construct validity or likely project success. Every result includes its evidence basis, limitations and required human decisions. See [Methodological assurance](docs/ASSURANCE.md).
+
+## How the indicators are calculated
+
+**Model-convergence indicators are computed, not asked for.** Every consumer question and persona variant goes to each probe model (default `gpt-4.1-mini` and `gpt-5.4-mini`). A classifier marks how each of the 20 answers treats each client hypothesis: main cause (1), one factor among several (0.6), disputed (minus 0.5), absent (0). The total is divided by the number of answers. Bands: 0 to 25 Low, 26 to 50 Medium, 51 to 75 High, 76 to 100 Critical. The report shows the counts per model and the formula. The explanation agent receives the measured score and must explain it with verbatim quotes; it cannot change it. Scores are withheld unless at least 80% of expected answers arrive overall and from every configured model. If no probe answers arrive, the run stops without producing a placeholder report.
 
 **Evidence is grounded per hypothesis.** A reasoning model with web search returns structured findings for and against each hypothesis, per country, with verdict, source and year. These feed the drift, methodology, confidence and deliverables agents, so the front page can cite published sources.
 
-**Confidence scores the brief, not the recommendation.** The confidence agent is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
+**The research-design review indicator assesses the brief, not the recommendation.** The review stage is told to score the design as stated and not to credit the client for methods BRIEF proposed. If the stated sample cannot test a hypothesis (older users on a 25 to 40 sample; drop-off on existing customers; Italy with UK-only interviews) the score is capped at 50 in code. The label is computed from the score: 75+ Strong, 55 to 74 Adequate, 40 to 54 Fragile, below 40 Compromised.
 
 **The guide audit score** starts at 100 and loses 12 per high, 5 per medium and 1 per low issue, scaled for short instruments. It measures wording, not study design.
 
@@ -97,14 +120,24 @@ Each agent runs inside its own error recovery. If one fails it records the failu
 
 1. Choose the tool tab and the mode (Market or UX).
 2. Paste the text, or upload PDF, DOCX, TXT or MD. Clear empties the boxes.
-3. Brief audit only: click **Review hypotheses**, check what was read, edit the hypotheses, sample and fieldwork, then **Run the analysis**. Tick **Quick mode** for a one to two minute run with one model and no web evidence; use the full run (five to seven minutes) for anything a client will see.
-4. Read the report in the browser or export it. The header switches light and dark mode.
+3. Brief audit only: click **Review hypotheses**, check what was read, edit the hypotheses, sample and fieldwork, then **Run the analysis**. Tick **Quick mode** for a one to two minute run with one model and no web evidence; use the full run (five to seven minutes) before making an internal project decision.
+4. Start with the internal workflow recommendation and its reasons, then inspect the score, evidence trail, run-health warnings and source status.
+5. Complete researcher sign-off for material findings. Read the full report in the browser or export it; the header switches light and dark mode.
+
+The review screen is populated from the pasted brief. BRIEF uses the configured AI model first and fills any missing fields with conservative local extraction. If the model is unavailable, the local extraction still identifies common labelled and prose fields—including explicit client hypotheses—and the screen shows a warning so the researcher can check every field before continuing. A working API key is still required to run the analysis itself.
 
 ---
 
 ## Trying it
 
-Three briefs and a flawed guide are in `tests/`. The quickest check is the guide audit: paste `tests/sample-guide.md` with the bank brief from `tests/briefs.json` in the optional box. Expected: Q2, Q3, Q4, Q6, Q7, Q8 and Q10 flagged; Q1, Q5 and Q9 clean; "lack financial literacy" marked confirmed only.
+Security, policy, deterministic-rule, contract, export and adversarial regression tests are in `tests/` and run in CI. Fifteen synthetic cases live in `evals/`; they are smoke tests, not expert validation. The evaluator reads only an explicit whitelist of analytical output fields, never the submitted brief, parsed fields, hypothesis wording or raw answers.
+
+Run the offline checks with:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
 
 A brief to try:
 
@@ -126,7 +159,7 @@ Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Then:
 python app.py
 ```
 
-Open `http://localhost:5000`.
+Open `http://brief.localhost:5000`. If that name is not recognised by a managed browser or network policy, `http://localhost:5000` remains the fallback.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -136,6 +169,8 @@ Open `http://localhost:5000`.
 | `OPENAI_GROUNDING_MODEL` | `gpt-5.4-mini` | Reasoning model for web-grounded evidence |
 | `OPENAI_GROUNDING_EFFORT` | `low` | `low`, `medium` or `high`; medium is slower and searches more |
 | `OPENAI_BASE_URL` | unset | Route API calls through an internal gateway |
+| `BRIEF_MIN_ANSWER_COVERAGE` | `0.8` | Minimum overall and per-model probe coverage required before scores are calculated |
+| `BRIEF_DEBUG` | `false` | Enables the Flask debugger only when explicitly set for local development |
 | `BRIEF_PASSWORD` | unset | Shared password for a hosted instance |
 | `BRIEF_RUN_LOG_DIR` | `runs` | Where run logs are written |
 
@@ -143,24 +178,15 @@ Open `http://localhost:5000`.
 
 ## Testing
 
-**Offline unit tests** (no API key, under a second): `python -m unittest discover -s tests`. A fake model client exercises the plumbing: step order, key passing, fallbacks, scoring arithmetic, the confidence cap and label, quick mode, the audit counting rules, and the Word and PDF exporters.
+**Offline tests** (no API key): `pytest -q`. CI also compiles Python, checks browser JavaScript, audits dependencies, produces an SBOM, builds the container and smoke-tests liveness plus authenticated homepage access.
 
-**Evaluation set**: `tests/briefs.json` holds eleven briefs (ten market research, one UX) with planted biases and the flags BRIEF should raise.
-
-```bash
-python evaluate.py                 # all eleven briefs, about eleven analyses of API usage
-python evaluate.py --quick         # cheap smoke test, one model, no web search
-python evaluate.py --dry           # list the checks without calling the API
-python evaluate.py ev-adoption-rural
-```
-
-It prints PASS or MISS per planted flag and writes a scorecard to `tests/results/`. A change to prompts or models counts as an improvement only if this score rises.
+**Evaluation status:** checked-in synthetic cases verify deterministic and adversarial behaviour. Model quality remains unvalidated until a blinded, independently labelled expert benchmark is completed under `docs/ASSURANCE.md`.
 
 ---
 
 ## Inspecting a run
 
-Every analysis writes one JSON file per agent to `runs/<timestamp>/` (`01_parse.json` through `12_deliverables.json`, plus `03b_convergence.json` and `09a_hypothesis_grounding.json`). A failed step writes `error_<step>.json`. This is how any number in the report can be traced to what the agent saw and said. The report's Run health card names the folder.
+Raw trace logging is disabled by default. When explicitly enabled under an approved retention policy, an analysis writes JSON traces under `runs/`. Normal operational logs contain stage completion, model, request ID and token metadata rather than brief or response content.
 
 ---
 
@@ -176,10 +202,11 @@ documents.py       PDF, DOCX and text extraction for uploads
 export.py          designed Word and PDF documents from the result data
 app.py             Flask routes, sessions, server-sent progress
 templates/         index.html (markup only)
+templates/         minimal server-rendered application shell
 static/            css/brief.css and js/brief.js (no build step)
-tests/             unit tests, evaluation brief set, sample guide
+tests/             offline security and access-control regression tests
 evaluate.py        runs the brief set and scores what BRIEF caught
-Dockerfile         container build; render.yaml and Procfile for PaaS hosts
+Dockerfile         container build; deployment files require an approved private host
 ```
 
 ---
@@ -190,7 +217,7 @@ This section is for whoever has to run BRIEF inside an organisation. It covers w
 
 ### What it is
 
-A single-process Python web application. No database, no message queue, no background workers beyond threads inside the one process. State lives in process memory for 30 minutes per session and in a local `runs/` folder as JSON files. It can run on a laptop, a small VM, a container platform, or a PaaS such as Render.
+A single-process Python web application. No database, no message queue, no background workers beyond threads inside the one process. State lives in process memory for 30 minutes per session. Raw JSON traces are disabled by default and are written under `runs/` only when explicitly enabled. It can run on a company laptop, a private VM or an organisation-approved private container platform. Do not expose it as a public production service.
 
 ### Runtime and dependencies
 
@@ -208,7 +235,7 @@ All dependencies are pure Python or ship wheels for Windows, macOS and Linux. No
 
 ### External services and network
 
-The only external service is the OpenAI API. Outbound HTTPS to `api.openai.com` on port 443 must be allowed. Nothing else is called: no analytics, no CDN, no fonts, no telemetry. If the organisation routes AI traffic through a gateway, set `OPENAI_BASE_URL` in the environment and the `openai` client will use it.
+The only external service is the OpenAI API. Outbound HTTPS to `api.openai.com` on port 443 must be allowed. There are no analytics, telemetry, CDN or external font requests; the interface uses system fonts already installed on the user's device. If the organisation routes AI traffic through a gateway, set `OPENAI_BASE_URL` in the environment and the `openai` client will use it.
 
 Endpoints used:
 
@@ -219,19 +246,23 @@ A full brief analysis makes roughly 45 API calls; a guide audit makes three to f
 
 ### Data flow and retention
 
-- **What leaves the network:** the brief or guide text the user pastes or uploads, and the text of the AI answers it generates, are sent to OpenAI inside API requests. Under OpenAI's API terms this data is not used to train models and is retained by OpenAI for up to 30 days for abuse monitoring, or zero days if the organisation has a zero-data-retention agreement. Confirm the current terms for the account in use.
-- **What is stored locally:** every run writes one JSON file per agent to `runs/<timestamp>/` on the host, containing the inputs and outputs of that agent, including the brief text. This is the audit trail that makes scores traceable. Rotate or delete the folder on a schedule that matches the organisation's retention policy, or set `BRIEF_RUN_LOG_DIR` to a mounted volume. Nothing else is written to disk.
+- **What leaves the network:** the brief or guide text the user pastes or uploads, and the text of the AI answers it generates, are sent to OpenAI inside API requests. OpenAI states that API data is not used for training unless the customer opts in. Abuse-monitoring and application-state retention are separate controls. This application passes `store=False`, but the operator must confirm the project’s current retention, residency and web-search eligibility before use.
+- **What is stored locally:** by default, no raw prompt or response payload is written. Enabling `BRIEF_LOG_RAW_PAYLOADS` writes sensitive JSON traces under `runs/` and therefore requires an approved encrypted location, access policy and automatic deletion schedule.
 - **What is stored in memory:** session results for 30 minutes (`SESSION_TTL_SECONDS`), then discarded.
 - **Uploaded files** are read into memory, converted to text, and discarded. The file itself is not saved.
 - **Exports** (Word, PDF, Markdown) are generated on request and streamed to the browser; they are not saved on the server.
 
 ### Authentication and access
 
-The app has one optional shared password (`BRIEF_PASSWORD`, HTTP Basic). It has no user accounts, roles, or SSO. For anything beyond a small trusted group, put it behind the organisation's existing reverse proxy or identity-aware proxy (Azure AD Application Proxy, Cloudflare Access, an OAuth2 proxy) and leave `BRIEF_PASSWORD` unset. The app trusts whatever reaches it, so do not expose it to the public internet without one of these in front.
+The application fails closed unless it receives a trusted identity from an organisational proxy, has an explicitly configured pilot password, or is running with the development-only insecure flag. Production should set `BRIEF_TRUST_AUTH_PROXY=true` behind an OIDC/identity-aware proxy that strips inbound copies of the identity header. The Basic password remains a small-pilot fallback, not production identity.
+
+### Researcher review workflow
+
+The researcher corrects extracted hypotheses before analysis. Results then open with an automatically generated internal workflow recommendation and the deterministic reasons behind it. Each material finding records its evidence class and requires an accept, reject or amend decision with a rationale. Human review changes the review status, not the computed recommendation. Consequential citations appear as unverified findings until checked. Word, PDF and Markdown exports include attributed adjudication. Reports from different prompt versions are marked non-comparable.
 
 ### Configuration
 
-All settings are environment variables, read once at start by `config.py`. `.env.example` lists them. The two that matter for adoption:
+All settings are environment variables, read once at start by `config.py`. `.env.example` lists them. `BRIEF_POLICY_PROFILE` selects `public_synthetic`, `internal_confidential` or `regulated_zdr`; unsafe web/logging overrides fail startup. The two that matter for adoption:
 
 - `OPENAI_API_KEY`: use a key from an organisation-owned OpenAI account or project, not a personal one, so spend limits, data terms and revocation sit with the organisation.
 - `BRIEF_PASSWORD`: set it, or front the app with a proxy.
@@ -240,7 +271,7 @@ Optional: `OPENAI_MODEL`, `OPENAI_PROBE_MODELS`, `OPENAI_GROUNDING_MODEL`, `OPEN
 
 ### Running it
 
-Any host that can run a Python process works. Three tested paths:
+Use only an organisation-approved private host. Two supported paths are:
 
 **Container**
 
@@ -248,8 +279,6 @@ Any host that can run a Python process works. Three tested paths:
 docker build -t brief .
 docker run -p 8000:8000 -e OPENAI_API_KEY=... -e BRIEF_PASSWORD=... -v brief-runs:/app/runs brief
 ```
-
-**Render or similar PaaS**: `render.yaml` and `Procfile` are included. The start command is the same as the container's.
 
 **Bare VM or laptop**: `pip install -r requirements.txt` then `gunicorn -w 1 --threads 8 --timeout 1000 app:app` (Linux or macOS) or `python app.py` (any OS, development server).
 
@@ -259,7 +288,7 @@ Constraints to respect:
 - **Long requests.** A full analysis streams progress for five to seven minutes over one HTTP connection. Set proxy and load balancer idle timeouts to at least 15 minutes for the `/progress/` path, and disable response buffering for it (the app sends the `X-Accel-Buffering: no` header for nginx).
 - **Resources.** Under 300 MB of memory and negligible CPU; the work happens at OpenAI. A 0.5 vCPU, 512 MB instance is enough for a team.
 
-`GET /health` returns `{"status": "ok"}` for liveness checks.
+`GET /health/live` provides unauthenticated liveness without dependency details. Authenticated `GET /health/ready` checks required configuration.
 
 ### Cost
 
@@ -277,13 +306,7 @@ The repository has no licence file yet; add one before sharing beyond the organi
 
 ## Deploying for colleagues
 
-The repo includes a `render.yaml` and a `Procfile`. On Render:
-
-1. Create a new Blueprint from this repo, or a Web Service with the start command in the `Procfile`.
-2. Set `OPENAI_API_KEY` and `BRIEF_PASSWORD` in the environment settings.
-3. Share the URL and the password.
-
-Run one worker only; sessions live in process memory. A free Render instance sleeps after 15 minutes without traffic and takes about a minute to wake; the Starter tier removes that.
+Deployment requires organisational approval, a private network path and an OIDC or identity-aware proxy. Do not publish the service directly to the internet. Use one worker only because sessions live in process memory, and configure the proxy to strip inbound identity headers before setting the trusted user header itself. The included `render.yaml` and `Procfile` are retained as packaging references, not as approval to use a public PaaS.
 
 ---
 
@@ -299,7 +322,8 @@ The hackathon build had eleven agents on Foundry, one probe model, a single grou
 - UX research mode
 - Paste-ready outputs: challenge note, probes, screener, task scenarios
 - The guide and questionnaire audit as a second tool
-- Word and PDF exports, light and dark mode
+- Word and PDF exports; a responsive, decision-led browser interface; light and dark themes; improved keyboard accessibility
+- Automatic internal workflow recommendations with explicit reasons, assurance limits and separate researcher sign-off status
 - Refactor into config, llm, agent, audit, grounding, documents, export and app modules; offline test suite; evaluation set
 
 Still open: running the same brief over time to see how contamination drifts; comparing predicted gaps against real fieldwork results, which is the only true test of whether the tool works.
@@ -309,3 +333,12 @@ Still open: running the same brief over time to see how contamination drifts; co
 ## A note on purpose
 
 BRIEF was built for market research, but the same problem reaches anywhere people use AI to frame a question before investigating it: healthcare, public policy, financial inclusion. Wherever a study's starting assumptions quietly come from a model rather than the world, the findings risk confirming the model instead of the reality. Making those assumptions visible before the work begins is a small contribution to research integrity.
+
+
+## Assurance and operations
+
+- [Methodological assurance](docs/ASSURANCE.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Deployment baseline](docs/DEPLOYMENT.md)
+- [Operational runbook](docs/RUNBOOK.md)
+- [Verification and acceptance](docs/VERIFICATION.md)

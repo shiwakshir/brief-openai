@@ -1,16 +1,17 @@
-# BRIEF: single-process web app. Sessions live in memory, so run exactly one worker.
-FROM python:3.12-slim
+FROM python:3.12.9-slim-bookworm
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --no-compile -r requirements.txt
 
 COPY . .
-RUN mkdir -p runs && useradd --create-home brief && chown -R brief /app
-USER brief
+RUN mkdir -p /app/runs && useradd --create-home --uid 10001 brief && chown -R brief:brief /app
+USER 10001:10001
 
 EXPOSE 8000
-HEALTHCHECK CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 1
-CMD ["gunicorn", "-w", "1", "--threads", "8", "--timeout", "1000", "-b", "0.0.0.0:8000", "app:app"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)" || exit 1
+CMD ["gunicorn", "-w", "1", "--threads", "8", "--timeout", "1000", "--access-logfile", "-", "--error-logfile", "-", "-b", "0.0.0.0:8000", "app:app"]

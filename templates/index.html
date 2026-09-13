@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BRIEF - Bias & Research Intelligence Evaluation Framework</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/brief.css') }}">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-name">BRIEF</div>
+    <div class="logo-pipe"></div>
+    <div class="logo-full">Bias &amp; Research<br>Intelligence Evaluation Framework</div>
+  </div>
+  <div class="header-right">
+    <button type="button" class="theme-toggle" id="theme-toggle" data-action="toggle-theme" aria-label="Switch between light and dark mode" title="Light / dark">Light mode</button>
+    <div class="foundry-badge">Internal tool</div>
+  </div>
+</header>
+
+<div class="page-wrap">
+
+  <!-- LANDING -->
+  <div id="landing">
+
+    <div class="hero">
+      <div class="hero-copy">
+        <div class="hero-eyebrow">Research quality assurance</div>
+        <h1>Review a brief before fieldwork.</h1>
+        <p class="hero-body">Check the assumptions in a research brief or discussion guide, inspect the supporting evidence, and record an internal recommendation before the study begins.</p>
+      </div>
+    </div>
+
+    <div class="tool-switch" role="tablist" aria-label="Choose an analysis">
+      <button type="button" role="tab" aria-selected="true" aria-controls="brief-section" class="tool-tab active" id="tool-brief" data-action="set-tool" data-tool="brief">Audit a brief</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="guide-section" class="tool-tab" id="tool-guide" data-action="set-tool" data-tool="guide">Audit a guide or questionnaire</button>
+    </div>
+
+    <div class="input-section" id="guide-section" role="tabpanel" aria-labelledby="tool-guide" style="display:none">
+      <div class="input-toolbar">
+        <label class="input-label" for="guide-input">Discussion guide, script, survey or test plan</label>
+        <div class="toolbar-right">
+          <div class="mode-toggle" role="group" aria-label="Research mode">
+            <button type="button" class="mode-btn active" id="gmode-market" data-action="set-mode" data-mode="market">Market research</button>
+            <button type="button" class="mode-btn" id="gmode-ux" data-action="set-mode" data-mode="ux">UX research</button>
+          </div>
+          <button type="button" class="btn-clear" data-action="clear-inputs" data-target="guide">Clear</button>
+          <label class="btn-upload" for="guide-file-input">Upload PDF, DOCX or TXT</label>
+          <input type="file" id="guide-file-input" accept=".pdf,.docx,.txt,.md" data-upload-target="guide-input" style="display:none">
+        </div>
+      </div>
+      <div class="textarea-wrap">
+        <textarea id="guide-input" aria-label="Guide or questionnaire input" rows="10" placeholder="Paste the discussion guide, interview script, survey or usability test plan. Every question, probe and task will be checked for leading wording, presuppositions, loaded terms, priming and hypothesis-confirming items, with a neutral rewrite for each."></textarea>
+      </div>
+      <div class="review-key" style="margin-top:var(--sp-3)">Optional: the client brief, so coverage of the client's hypotheses can be checked</div>
+      <div class="textarea-wrap">
+        <textarea id="guide-brief-input" aria-label="Optional brief" rows="3" placeholder="Paste the brief or the client's stated hypotheses. Leave empty to audit wording only."></textarea>
+        <div class="input-footer">
+          <span class="input-hint" id="guide-hint">4 steps &nbsp;·&nbsp; about 1-2 minutes</span>
+          <button class="btn-run" id="audit-btn" data-action="run-audit">Audit this guide &nbsp;&#9654;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-section" id="brief-section" role="tabpanel" aria-labelledby="tool-brief">
+      <div class="input-toolbar">
+        <label class="input-label" for="brief-input">Research brief</label>
+        <div class="toolbar-right">
+          <div class="mode-toggle" role="group" aria-label="Research mode">
+            <button type="button" class="mode-btn active" id="mode-market" data-action="set-mode" data-mode="market">Market research</button>
+            <button type="button" class="mode-btn" id="mode-ux" data-action="set-mode" data-mode="ux">UX research</button>
+          </div>
+          <button type="button" class="btn-clear" data-action="clear-inputs" data-target="brief">Clear</button>
+          <label class="btn-upload" for="file-input">Upload PDF, DOCX or TXT</label>
+          <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" data-upload-target="brief-input" style="display:none">
+        </div>
+      </div>
+      <div class="textarea-wrap">
+        <textarea id="brief-input" aria-label="Research brief input" rows="8" placeholder="Paste your research brief here. Who is the client, what do they think they know, who are they researching, and where? The more context you give, the sharper the analysis."></textarea>
+        <div class="input-footer">
+          <span class="input-hint" id="input-hint">12 reasoning steps &nbsp;·&nbsp; 5-7 minutes</span>
+          <button class="btn-run" id="run-btn" aria-live="polite" data-action="review-brief">Review hypotheses &nbsp;&#9654;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="review-section" id="review-section" style="display:none">
+      <div class="card">
+        <div class="card-label">Check what BRIEF read before it runs</div>
+        <p class="review-intro">Everything downstream depends on these hypotheses. Edit them, add the ones the client said out loud but never wrote down, and delete anything that is not a client belief.</p>
+        <div class="parse-notice" id="review-parse-notice" role="status" style="display:none"></div>
+        <div class="review-grid">
+          <div><div class="review-key">Category</div><input class="review-input" id="rv-category"></div>
+          <div><div class="review-key">Specific topic (what people would call it)</div><input class="review-input" id="rv-topic"></div>
+          <div><div class="review-key">Audience</div><input class="review-input" id="rv-audience"></div>
+          <div><div class="review-key">Geography</div><input class="review-input" id="rv-geography"></div>
+          <div id="rv-product-wrap"><div class="review-key">Product or service</div><input class="review-input" id="rv-product"></div>
+          <div><div class="review-key">Who will be recruited</div><input class="review-input" id="rv-sample"></div>
+          <div><div class="review-key">Where fieldwork happens</div><input class="review-input" id="rv-fieldwork"></div>
+        </div>
+        <div class="review-key" style="margin-top:var(--sp-4)">Client hypotheses</div>
+        <div id="rv-hypotheses"></div>
+        <button type="button" class="btn-new" data-action="add-hypothesis">+ Add a hypothesis</button>
+        <div class="input-footer" style="margin-top:var(--sp-4)">
+          <label class="input-hint" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="quick-mode"> Quick mode: one AI model, no web evidence, 1-2 minutes. Use for triage; run the full version before making an internal project decision.
+          </label>
+          <button class="btn-run" id="confirm-btn" data-action="run-analysis">Run the analysis &nbsp;&#9654;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="error-box" id="error-box"></div>
+
+    <div id="progress-section" role="status" aria-live="polite">
+      <div class="progress-header">
+        <div class="progress-status" id="progress-status">Starting up...</div>
+        <div class="progress-pct" id="progress-pct">0%</div>
+      </div>
+      <button type="button" class="btn-new progress-cancel" id="cancel-btn" data-action="cancel-run">Cancel analysis</button>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="steps-grid" id="steps-grid"></div>
+    </div>
+
+  </div><!-- /landing -->
+
+  <!-- RESULTS -->
+  <div id="audit-view" aria-label="Guide audit results" style="display:none">
+    <div class="results-layout">
+      <nav class="results-nav" aria-label="Audit sections">
+        <div class="nav-header">Guide audit</div>
+        <div class="nav-item active" data-action="show-audit-panel" data-panel="asummary"><span class="nav-num">&#9788;</span><span class="nav-label">Summary</span></div>
+        <div class="nav-item" data-action="show-audit-panel" data-panel="aitems"><span class="nav-num">01</span><span class="nav-label">Question by question</span></div>
+        <div class="nav-item" data-action="show-audit-panel" data-panel="acoverage"><span class="nav-num">02</span><span class="nav-label">Hypothesis coverage</span></div>
+        <div class="nav-item" data-action="show-audit-panel" data-panel="arewrite"><span class="nav-num">03</span><span class="nav-label">Clean copy</span></div>
+        <div class="nav-item" data-action="show-audit-panel" data-panel="areview"><span class="nav-num">04</span><span class="nav-label">Reviewer sign-off</span></div>
+        <div class="nav-divider"></div>
+        <div class="export-wrap">
+          <button class="btn-export" data-action="toggle-export" data-menu="audit-export-menu">&#8595; Export audit</button>
+          <div class="export-menu" id="audit-export-menu">
+            <button data-action="download" data-kind="audit" data-format="docx">Word (.docx)</button>
+            <button data-action="download" data-kind="audit" data-format="pdf">PDF</button>
+            <button data-action="download" data-kind="audit" data-format="md">Markdown</button>
+          </div>
+        </div>
+        <button class="btn-new" data-action="new-analysis">+ New</button>
+      </nav>
+      <div class="results-content">
+        <div class="panel active" id="panel-asummary"><div id="panel-asummary-content"></div></div>
+        <div class="panel" id="panel-aitems">
+          <div class="section-title"><div class="section-eyebrow">01 / Question by question</div><h2>Every item, what is wrong with it, and a neutral version</h2><p>Items with no issues are shown faded so you can see the whole instrument in order and judge priming.</p></div>
+          <div id="panel-aitems-content"></div>
+        </div>
+        <div class="panel" id="panel-acoverage">
+          <div class="section-title"><div class="section-eyebrow">02 / Hypothesis coverage</div><h2>Can this instrument disprove the client?</h2><p>For each client hypothesis: which items bear on it, and whether they test it or only confirm it.</p></div>
+          <div id="panel-acoverage-content"></div>
+        </div>
+        <div class="panel" id="panel-arewrite">
+          <div class="section-title"><div class="section-eyebrow">03 / Clean copy</div><h2>The instrument with every rewrite applied</h2><p>Copy this into your guide, then restore your own voice where the rewrite went flat.</p></div>
+          <div id="panel-arewrite-content"></div>
+        </div>
+        <div class="panel" id="panel-areview">
+          <div class="section-title"><div class="section-eyebrow">04 / Reviewer sign-off</div><h2>Record the researcher decision</h2><p>Accept, reject or amend every material finding before using this audit for fieldwork decisions.</p></div>
+          <div id="panel-areview-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-view" aria-label="Analysis results">
+    <div class="results-layout">
+
+      <!-- SIDEBAR -->
+      <nav class="results-nav" aria-label="Analysis sections">
+        <div class="nav-header">Analysis</div>
+        <div class="nav-item active" data-action="show-panel" data-panel="summary">
+          <span class="nav-num">&#9788;</span>
+          <span class="nav-label">Summary</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="brief">
+          <span class="nav-num">01</span>
+          <span class="nav-label">Brief</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="assumptions">
+          <span class="nav-num">02</span>
+          <span class="nav-label">What AI Assumes</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="gaps">
+          <span class="nav-num">03</span>
+          <span class="nav-label">What AI Misses</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="contamination">
+          <span class="nav-num">04</span>
+          <span class="nav-label">Client Hypotheses</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="drift">
+          <span class="nav-num">05</span>
+          <span class="nav-label">Temporal Drift</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="competitors">
+          <span class="nav-num">06</span>
+          <span class="nav-label">Brand Priming</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="archaeology">
+          <span class="nav-num">07</span>
+          <span class="nav-label">Where It Comes From</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="methodology">
+          <span class="nav-num">08</span>
+          <span class="nav-label">How to Research It</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="evidence">
+          <span class="nav-num">09</span>
+          <span class="nav-label">What AI Actually Said</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="deliverables">
+          <span class="nav-num">10</span>
+          <span class="nav-label">Paste-ready Outputs</span>
+        </div>
+        <div class="nav-item" data-action="show-panel" data-panel="review">
+          <span class="nav-num">11</span>
+          <span class="nav-label">Reviewer sign-off</span>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="export-wrap">
+          <button class="btn-export" data-action="toggle-export" data-menu="report-export-menu">&#8595; Export report</button>
+          <div class="export-menu" id="report-export-menu">
+            <button data-action="download" data-kind="report" data-format="docx">Word (.docx)</button>
+            <button data-action="download" data-kind="report" data-format="pdf">PDF</button>
+            <button data-action="download" data-kind="report" data-format="md">Markdown</button>
+          </div>
+        </div>
+        <button class="btn-new" data-action="new-analysis">+ New brief</button>
+      </nav>
+
+      <!-- CONTENT AREA -->
+      <div class="results-content">
+
+        <!-- SUMMARY -->
+        <div class="panel active" id="panel-summary">
+          <div id="panel-summary-content"></div>
+        </div>
+
+        <!-- 01 BRIEF -->
+        <div class="panel" id="panel-brief">
+          <div class="section-title">
+            <div class="section-eyebrow">01 / Brief</div>
+            <h2>What BRIEF read</h2>
+            <p>Make sure this matches what you meant before reading the rest.</p>
+          </div>
+          <div id="panel-brief-content"></div>
+        </div>
+
+        <!-- 02 ASSUMPTIONS -->
+        <div class="panel" id="panel-assumptions">
+          <div class="section-title">
+            <div class="section-eyebrow">02 / What AI Assumes</div>
+            <h2>What AI assumes about this topic</h2>
+            <p>Pulled from 6 consumer-style queries and 4 persona variants, across more than one AI model. Your respondents have likely seen most of this already.</p>
+          </div>
+          <div id="panel-assumptions-content"></div>
+        </div>
+
+        <!-- 03 GAPS -->
+        <div class="panel" id="panel-gaps">
+          <div class="section-title">
+            <div class="section-eyebrow">03 / What AI Misses</div>
+            <h2>What AI gets wrong about your audience</h2>
+            <p>What AI leans on too heavily, what it skips, and the questions neither the client nor AI is asking.</p>
+          </div>
+          <div id="panel-gaps-content"></div>
+        </div>
+
+        <!-- 04 CONTAMINATION -->
+        <div class="panel" id="panel-contamination">
+          <div class="section-title">
+            <div class="section-eyebrow">04 / Client Hypotheses</div>
+            <h2>Are the client's hypotheses actually theirs?</h2>
+            <p>How much of what your client "knows" came from AI rather than the market. A high score means test the assumption before you build research around it.</p>
+          </div>
+          <div id="panel-contamination-content"></div>
+        </div>
+
+        <!-- 05 DRIFT -->
+        <div class="panel" id="panel-drift">
+          <div class="section-title">
+            <div class="section-eyebrow">05 / Temporal Drift</div>
+            <h2>How stale is AI's picture of this market?</h2>
+            <p>AI training data stops at a point in time. Markets keep moving. These are the assumptions most likely to be out of date.</p>
+          </div>
+          <div id="panel-drift-content"></div>
+        </div>
+
+        <!-- 06 COMPETITORS -->
+        <div class="panel" id="panel-competitors">
+          <div class="section-title">
+            <div class="section-eyebrow">06 / Brand Priming</div>
+            <h2>Who AI puts in the room before you do</h2>
+            <p>Brands that show up in AI answers without being asked for. Your respondents have probably run into them too.</p>
+          </div>
+          <div id="panel-competitors-content"></div>
+        </div>
+
+        <!-- 07 ARCHAEOLOGY -->
+        <div class="panel" id="panel-archaeology">
+          <div class="section-title">
+            <div class="section-eyebrow">07 / Where It Comes From</div>
+            <h2>Where these assumptions come from</h2>
+            <p>The kinds of sources that shaped how AI sees this topic, and whose perspective is missing from them.</p>
+          </div>
+          <div id="panel-archaeology-content"></div>
+        </div>
+
+        <!-- 08 METHODOLOGY -->
+        <div class="panel" id="panel-methodology">
+          <div class="section-title">
+            <div class="section-eyebrow">08 / How to Research It</div>
+            <h2>How to research this without AI contaminating your findings</h2>
+            <p>Method recommendations based on the specific gaps above.</p>
+          </div>
+          <div id="panel-methodology-content"></div>
+        </div>
+
+        <!-- 09 EVIDENCE -->
+        <div class="panel" id="panel-evidence">
+          <div class="section-title">
+            <div class="section-eyebrow">09 / What AI Actually Said</div>
+            <h2>The raw AI answers behind every score</h2>
+            <p>Six consumer-style questions and four persona variants, asked to each probe model, exactly as answered. Every score in this report is computed from these.</p>
+          </div>
+          <div id="panel-evidence-content"></div>
+        </div>
+
+        <!-- 10 DELIVERABLES -->
+        <div class="panel" id="panel-deliverables">
+          <div class="section-title">
+            <div class="section-eyebrow">10 / Paste-ready Outputs</div>
+            <h2>The note, the probes and the screener</h2>
+            <p>Written from the evidence above, for a proposal, a discussion guide and a recruitment screener. Copy, then edit in your own voice.</p>
+          </div>
+          <div id="panel-deliverables-content"></div>
+        </div>
+
+        <div class="panel" id="panel-review">
+          <div class="section-title">
+            <div class="section-eyebrow">11 / Reviewer sign-off</div>
+            <h2>Record the researcher decision</h2>
+            <p>Accept, reject or amend every material finding. An export is advisory until this review is complete.</p>
+          </div>
+          <div id="panel-review-content"></div>
+        </div>
+
+      </div><!-- /results-content -->
+    </div><!-- /results-layout -->
+  </div><!-- /results-view -->
+
+</div><!-- /page-wrap -->
+
+<script src="{{ url_for('static', filename='js/brief.js') }}"></script>
+
+</body>
+</html>

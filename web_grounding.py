@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -36,13 +37,15 @@ LOW_VALUE_URL_MARKERS = ("/about", "about-us", "about_us", "/o-nas", "/ueber-uns
 
 
 def _clean_url(url: str) -> str:
-    """Remove tracking parameters such as utm_source so citations are clean."""
+    """Keep only HTTP(S) URLs and remove tracking parameters."""
     try:
-        parts = urlsplit(url)
+        parts = urlsplit(url.strip())
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            return ""
         query = [(k, v) for k, v in parse_qsl(parts.query) if not k.lower().startswith("utm_")]
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
     except Exception:
-        return url
+        return ""
 
 
 _MD_LINK = re.compile(r"\(?\[([^\]]*)\]\((https?://[^)\s]+)\)\)?")
@@ -58,6 +61,9 @@ def _clean_prose(text: str) -> str:
 
 
 def is_configured() -> bool:
+    if not config.ENABLE_WEB_GROUNDING:
+        log.info("Web grounding is disabled by policy.")
+        return False
     if not config.OPENAI_API_KEY:
         log.warning("OPENAI_API_KEY is missing; web grounding disabled.")
         return False
@@ -83,6 +89,7 @@ def retrieve(query: str, max_subqueries: int = 4, instructions: str | None = Non
             tools=[{"type": "web_search"}],
             instructions=instructions,
             input=query,
+            store=False,
         )
     except Exception as e:
         log.warning("grounding call failed: %s: %s", type(e).__name__, e)
@@ -114,6 +121,8 @@ def retrieve(query: str, max_subqueries: int = 4, instructions: str | None = Non
                         "title": " ".join((getattr(ann, "title", "") or "Source").split())[:120],
                         "url": _clean_url(getattr(ann, "url", "") or ""),
                         "snippet": snippet[:280],
+                        "retrieved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "review_status": "unverified",
                     })
     except Exception as e:
         log.warning("could not read grounding output: %s", e)
@@ -174,9 +183,17 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
         "Find published evidence for and against this hypothesis in each country."
     )
     raw = retrieve(query, instructions=instructions)
+    retrieved_urls = {
+        _clean_url(str(item.get("url", "")))
+        for item in raw.get("citations", [])
+        if isinstance(item, dict) and item.get("url")
+    }
     result = {
         "grounded": False, "hypothesis": hypothesis, "verdict": "insufficient evidence",
         "summary": "", "countries": [], "citations": raw.get("citations", []),
+        "retrieval_status": "sources_retrieved" if retrieved_urls else "no_sources_retrieved",
+        "verification_status": "unverified",
+        "human_verified": False,
     }
     if not raw.get("answer"):
         return result
@@ -195,11 +212,15 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
             for it in items or []:
                 if not isinstance(it, dict) or not it.get("finding"):
                     continue
+                url = _clean_url(str(it.get("url", "")))
                 out.append({
                     "finding": _clean_prose(str(it.get("finding", "")))[:700],
                     "source": str(it.get("source", ""))[:160],
-                    "url": _clean_url(str(it.get("url", ""))),
+                    "url": url,
                     "year": str(it.get("year", ""))[:4],
+                    "source_retrieved": bool(url and url in retrieved_urls),
+                    "verification_status": "unverified",
+                    "human_verified": False,
                 })
             return out[:4]
         countries.append({
@@ -213,6 +234,17 @@ def retrieve_hypothesis_evidence(hypothesis: str, audience: str, geography: str,
         "summary": _clean_prose(str(data.get("summary", "")))[:1200],
         "countries": countries,
     })
-    result["grounded"] = bool(countries and any(c["for"] or c["against"] for c in countries))
+    findings = [
+        finding
+        for country in countries
+        for finding in (country["for"] + country["against"])
+    ]
+    result["grounded"] = bool(findings) and all(
+        finding.get("source_retrieved") is True for finding in findings
+    )
+    result["retrieved_findings"] = sum(
+        1 for finding in findings if finding.get("source_retrieved") is True
+    )
+    result["unretrieved_findings"] = len(findings) - result["retrieved_findings"]
     log.info("hypothesis evidence: %s countries, grounded=%s", len(countries), result["grounded"])
     return result
