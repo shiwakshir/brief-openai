@@ -51,6 +51,14 @@ def test_incomplete_hypothesis_classification_never_renders_as_zero():
     assert "This hypothesis was not scored" in javascript
 
 
+def test_failed_result_is_checked_before_the_success_ui_is_applied():
+    javascript = (ROOT / "static" / "js" / "brief.js").read_text(encoding="utf-8")
+    result_block = javascript[javascript.index("if (msg.type === 'result')"):javascript.index("es.onerror =")]
+    assert result_block.index("if (msg.status !== 'done')") < result_block.index("Done. Here\\'s what BRIEF found.")
+    assert "const hasScore = Number.isInteger(c.confidence_score);" in javascript
+    assert "${hasScore ? score : 'n/a'}" in javascript
+
+
 def test_csp_blocks_inline_scripts_but_allows_presentational_inline_styles():
     response = app_module.app.test_client().get("/health/live")
     csp = response.headers["Content-Security-Policy"]

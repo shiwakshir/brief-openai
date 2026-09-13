@@ -170,6 +170,7 @@ Open `http://brief.localhost:5000`. If that name is not recognised by a managed 
 | `OPENAI_GROUNDING_EFFORT` | `low` | `low`, `medium` or `high`; medium is slower and searches more |
 | `OPENAI_BASE_URL` | unset | Route API calls through an internal gateway |
 | `BRIEF_MIN_ANSWER_COVERAGE` | `0.8` | Minimum overall and per-model probe coverage required before scores are calculated |
+| `BRIEF_DEBUG` | `false` | Enables the Flask debugger only when explicitly set for local development |
 | `BRIEF_PASSWORD` | unset | Shared password for a hosted instance |
 | `BRIEF_RUN_LOG_DIR` | `runs` | Where run logs are written |
 
@@ -205,7 +206,7 @@ templates/         minimal server-rendered application shell
 static/            css/brief.css and js/brief.js (no build step)
 tests/             offline security and access-control regression tests
 evaluate.py        runs the brief set and scores what BRIEF caught
-Dockerfile         container build; render.yaml and Procfile for PaaS hosts
+Dockerfile         container build; deployment files require an approved private host
 ```
 
 ---
@@ -216,7 +217,7 @@ This section is for whoever has to run BRIEF inside an organisation. It covers w
 
 ### What it is
 
-A single-process Python web application. No database, no message queue, no background workers beyond threads inside the one process. State lives in process memory for 30 minutes per session. Raw JSON traces are disabled by default and are written under `runs/` only when explicitly enabled. It can run on a laptop, a small VM, a container platform, or a PaaS such as Render.
+A single-process Python web application. No database, no message queue, no background workers beyond threads inside the one process. State lives in process memory for 30 minutes per session. Raw JSON traces are disabled by default and are written under `runs/` only when explicitly enabled. It can run on a company laptop, a private VM or an organisation-approved private container platform. Do not expose it as a public production service.
 
 ### Runtime and dependencies
 
@@ -270,7 +271,7 @@ Optional: `OPENAI_MODEL`, `OPENAI_PROBE_MODELS`, `OPENAI_GROUNDING_MODEL`, `OPEN
 
 ### Running it
 
-Any host that can run a Python process works. Three tested paths:
+Use only an organisation-approved private host. Two supported paths are:
 
 **Container**
 
@@ -278,8 +279,6 @@ Any host that can run a Python process works. Three tested paths:
 docker build -t brief .
 docker run -p 8000:8000 -e OPENAI_API_KEY=... -e BRIEF_PASSWORD=... -v brief-runs:/app/runs brief
 ```
-
-**Render or similar PaaS**: `render.yaml` and `Procfile` are included. The start command is the same as the container's.
 
 **Bare VM or laptop**: `pip install -r requirements.txt` then `gunicorn -w 1 --threads 8 --timeout 1000 app:app` (Linux or macOS) or `python app.py` (any OS, development server).
 
@@ -307,13 +306,7 @@ The repository has no licence file yet; add one before sharing beyond the organi
 
 ## Deploying for colleagues
 
-The repo includes a `render.yaml` and a `Procfile`. On Render:
-
-1. Create a new Blueprint from this repo, or a Web Service with the start command in the `Procfile`.
-2. Set `OPENAI_API_KEY` and `BRIEF_PASSWORD` in the environment settings.
-3. Share the URL and the password.
-
-Run one worker only; sessions live in process memory. A free Render instance sleeps after 15 minutes without traffic and takes about a minute to wake; the Starter tier removes that.
+Deployment requires organisational approval, a private network path and an OIDC or identity-aware proxy. Do not publish the service directly to the internet. Use one worker only because sessions live in process memory, and configure the proxy to strip inbound identity headers before setting the trusted user header itself. The included `render.yaml` and `Procfile` are retained as packaging references, not as approval to use a public PaaS.
 
 ---
 

@@ -152,12 +152,14 @@ def build_report(data: dict[str, Any]) -> list[tuple]:
     el: list[tuple] = []
 
     mode = "UX research" if parsed.get("research_mode") == "ux" else "Market research"
+    confidence_score = conf.get("confidence_score")
+    display_score = confidence_score if isinstance(confidence_score, int) and not isinstance(confidence_score, bool) else "n/a"
     el.append(("title", "Research quality-assurance review", [
         _s(parsed.get("core_question") or parsed.get("research_objective"), 220),
         f"{mode}  ·  {time.strftime('%d %B %Y')}",
     ]))
-    el.append(("score", conf.get("confidence_score", "n/a"), _s(conf.get("confidence_label")),
-               _score_colour(conf.get("confidence_score")), "Heuristic research-design review indicator, out of 100"))
+    el.append(("score", display_score, _s(conf.get("confidence_label") or "Insufficient data"),
+               _score_colour(confidence_score), "Heuristic research-design review indicator, out of 100"))
     if internal:
         tone = "danger" if internal.get("decision") == "hold" else "amber" if internal.get("decision") == "proceed_with_changes" else "accent"
         detail = _s(internal.get("recommended_action"), 500)

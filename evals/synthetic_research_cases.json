@@ -392,13 +392,9 @@
         "city-centre",
         "city centre",
         "far from home"
-      ],
-      [
-        "unassessed",
-        "not measured",
-        "measurement limit"
       ]
     ],
+    "expect_unassessed": 1,
     "expect_none": [],
     "expect_high_contamination": [
       "motivation"

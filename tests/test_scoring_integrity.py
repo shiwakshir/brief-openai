@@ -89,6 +89,93 @@ def test_run_stops_when_every_probe_call_fails(monkeypatch):
         agent.run_brief("A sufficiently detailed brief for an offline test.", parsed_override=parsed)
 
 
+def test_reduced_prompt_set_is_measured_against_the_designed_prompt_count(monkeypatch):
+    monkeypatch.setattr(agent, "call_model", lambda *args, **kwargs: "A probe answer")
+    query_data = agent.step_query(
+        ["Only one generated prompt"],
+        {"topic": "banking", "core_question": "Why do people stop?"},
+        ["m"],
+    )
+    coverage = agent.answer_coverage(query_data)
+    assert query_data["expected_per_model"] == {"m": 10}
+    assert coverage["collected"] == 5
+    assert coverage["ratio"] == 0.5
+    assert coverage["ok"] is False
+
+
+def test_failed_prompt_generation_is_recorded_and_scores_are_withheld(monkeypatch):
+    parsed = {
+        "category": "banking", "topic": "bank applications", "core_question": "Why do people stop?",
+        "target_audience": "Adults", "geography": "UK", "client_hypotheses": ["It takes too long"],
+    }
+
+    def fail_generate(*_):
+        raise RuntimeError("prompt generation failed")
+
+    responses = [{"model": "m", "response": f"Answer {number}"} for number in range(5)]
+    monkeypatch.setattr(agent, "step_generate", fail_generate)
+    monkeypatch.setattr(agent, "step_query", lambda *_: {
+        "base_responses": responses, "persona_responses": [], "models": ["m"],
+        "expected_answers": 10, "expected_per_model": {"m": 10},
+    })
+    monkeypatch.setattr(agent, "step_cluster", lambda *_: {})
+    monkeypatch.setattr(agent, "step_gap_analysis", lambda *_: {})
+    monkeypatch.setattr(agent, "step_hypothesis_contamination", lambda *args: agent._contamination_fallback(args[-1]))
+    monkeypatch.setattr(agent, "step_assumption_archaeology", lambda *_: {})
+    monkeypatch.setattr(agent, "step_temporal_drift", lambda *_: {})
+    monkeypatch.setattr(agent, "step_competitor_intelligence", lambda *_: {})
+    monkeypatch.setattr(agent, "step_qual_quant_routing", lambda *_: {})
+    monkeypatch.setattr(agent, "step_confidence", lambda *_: {
+        "confidence_score": 40, "confidence_label": "Fragile", "headline": "Review", "top_three_risks": []
+    })
+    monkeypatch.setattr(agent, "step_deliverables", lambda *_: {})
+    result = agent.run_brief("A sufficiently detailed brief for testing.", parsed_override=parsed)
+    assert result["convergence"]["hypotheses"][0]["measured_score"] is None
+    assert result["run_health"]["status"] in {"degraded", "invalid"}
+    assert any(error["step"] == "generate" for error in result["run_health"]["step_errors"])
+
+
+def test_failed_contamination_explanation_preserves_ids_and_valid_measured_scores():
+    convergence = {"hypotheses": [{
+        "hypothesis_id": "hyp-123456789abc", "hypothesis": "Cost is the main barrier",
+        "classification_status": "valid", "measured_score": 70, "main": 7, "mentions": 1,
+        "n_answers": 10, "presence_pct": 80, "per_model": {"m": {"main": 7}},
+        "quotes": [{"model": "m", "quote": "Cost is the main issue."}],
+    }, {
+        "hypothesis_id": "hyp-abcdef123456", "hypothesis": "A sixth claim",
+        "classification_status": "unassessed", "measured_score": None,
+    }]}
+    fallback = agent._contamination_fallback(convergence)
+    by_id = {item["hypothesis_id"]: item for item in fallback["hypotheses_assessed"]}
+    assert set(by_id) == {"hyp-123456789abc", "hyp-abcdef123456"}
+    assert by_id["hyp-123456789abc"]["contamination_score"] == 70
+    assert by_id["hyp-123456789abc"]["evidence_quotes"] == ["Cost is the main issue."]
+    assert by_id["hyp-abcdef123456"]["contamination_score"] is None
+
+
+def test_failed_confidence_step_never_invents_a_midpoint_score(monkeypatch):
+    parsed = {
+        "category": "banking", "topic": "bank applications", "core_question": "Why do people stop?",
+        "target_audience": "Adults", "geography": "UK", "client_hypotheses": [],
+    }
+    monkeypatch.setattr(agent, "step_generate", lambda *_: [f"Prompt {number}" for number in range(6)])
+    monkeypatch.setattr(agent, "step_query", lambda *_: {
+        "base_responses": [{"model": "m", "response": "Answer"}], "persona_responses": [],
+        "models": ["m"], "expected_answers": 1, "expected_per_model": {"m": 1},
+    })
+    monkeypatch.setattr(agent, "step_convergence", lambda *_: {"hypotheses": [], "answer_coverage": {"ok": True}})
+    for name in ("step_cluster", "step_gap_analysis", "step_hypothesis_contamination",
+                 "step_assumption_archaeology", "step_temporal_drift", "step_competitor_intelligence",
+                 "step_qual_quant_routing", "step_deliverables"):
+        monkeypatch.setattr(agent, name, lambda *_: {})
+    monkeypatch.setattr(agent, "step_confidence", lambda *_: (_ for _ in ()).throw(RuntimeError("failed")))
+    result = agent.run_brief("A sufficiently detailed brief for testing.", parsed_override=parsed)
+    assert result["confidence"]["confidence_score"] is None
+    assert result["confidence"]["confidence_label"] == "Insufficient data"
+    assert result["run_health"]["status"] == "invalid"
+    assert result["internal_recommendation"]["decision"] == "hold"
+
+
 def test_sixth_hypothesis_is_preserved_and_marked_unassessed(monkeypatch):
     hypotheses = [f"Hypothesis {number}" for number in range(1, 7)]
     monkeypatch.setattr(agent, "call_json", lambda *args, **kwargs: {"verdicts": [
@@ -262,3 +349,22 @@ def test_evaluator_ignores_unlisted_fields_and_wildcard_detects_real_findings():
     assert ignored["forbidden"][0]["passed"] is True
     detected = check(case, {"confidence": {"top_three_risks": ["The sample excludes older people."]}})
     assert detected["forbidden"][0]["passed"] is False
+
+
+def test_evaluator_checks_unassessed_hypotheses_structurally():
+    case = {"id": "six", "expect_unassessed": 1}
+    passed = check(case, {"run_health": {"unassessed_hypotheses": 1}})
+    failed = check(case, {"run_health": {"unassessed_hypotheses": 0}})
+    assert passed["structural"][0]["passed"] is True
+    assert failed["structural"][0]["passed"] is False
+    assert thresholds_pass(metrics([failed]), 0, 0) is False
+
+
+def test_evaluator_does_not_score_repeated_screener_criteria():
+    case = {"id": "echo", "expected_findings": [{
+        "category": "deliverables", "phrases": ["existing customers aged 25 to 40"]
+    }]}
+    card = check(case, {"deliverables": {"screener_criteria": [{
+        "criterion": "Existing customers aged 25 to 40", "why": ""
+    }]}})
+    assert card["expected"][0]["passed"] is False

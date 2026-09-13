@@ -56,6 +56,7 @@ GROUNDING_TIMEOUT_SECONDS = _int("OPENAI_GROUNDING_TIMEOUT", 240)
 OPENAI_TIMEOUT_SECONDS = _int("OPENAI_TIMEOUT_SECONDS", 120)
 OPENAI_MAX_RETRIES = _int("OPENAI_MAX_RETRIES", 2, minimum=0)
 ENABLE_WEB_GROUNDING = _bool("BRIEF_ENABLE_WEB_GROUNDING", False)
+DEBUG = _bool("BRIEF_DEBUG", False)
 
 # Data handling
 RUN_LOG_DIR = os.getenv("BRIEF_RUN_LOG_DIR", "runs")
@@ -73,6 +74,7 @@ MAX_SESSIONS = _int("BRIEF_MAX_SESSIONS", 100)
 MAX_JOBS_PER_USER_HOUR = _int("BRIEF_MAX_JOBS_PER_USER_HOUR", 10)
 MAX_HYPOTHESES_GROUNDED = 3
 MAX_HYPOTHESES_MEASURED = 5
+PROBE_PROMPT_COUNT = 6
 PROBE_WORKERS = _int("BRIEF_PROBE_WORKERS", 8)
 MIN_ANSWER_COVERAGE = _ratio("BRIEF_MIN_ANSWER_COVERAGE", 0.8)
 
@@ -103,3 +105,5 @@ def validate_startup() -> None:
             raise RuntimeError("Configure BRIEF_TRUST_AUTH_PROXY or BRIEF_PASSWORD")
         if ALLOW_INSECURE_DEVELOPMENT:
             raise RuntimeError("BRIEF_ALLOW_INSECURE_DEVELOPMENT is forbidden outside development/test")
+        if DEBUG:
+            raise RuntimeError("BRIEF_DEBUG is forbidden outside development/test")

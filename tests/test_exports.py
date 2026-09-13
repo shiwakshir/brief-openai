@@ -81,3 +81,22 @@ def test_pdf_preserves_latin_greek_cyrillic_and_cjk_text():
     for value in ("Zürich", "Müller", "Ελλάδα", "Кириллица", "日本語", "中文", "Łódź", "Zoë", "Résumé"):
         assert value in text
     assert "DroidSansFallback" in fonts
+
+
+def test_missing_confidence_score_exports_as_na_not_none_or_fifty():
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    report = reviewed_report()
+    report["confidence"] = {
+        "confidence_score": None,
+        "confidence_label": "Insufficient data",
+        "headline": "The research-design review could not be produced.",
+        "top_three_risks": [],
+    }
+    pdf, _, _ = export_document("report", report, "pdf")
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages)
+    assert "n/a" in text
+    assert "Insufficient data" in text
+    assert "None" not in text

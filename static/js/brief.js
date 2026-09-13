@@ -313,17 +313,19 @@ async function runAnalysis() {
     if (msg.type === 'result') {
       es.close();
       currentEventSource = null;
-      document.getElementById('progress-fill').style.width = '100%';
-      document.getElementById('progress-status').textContent = 'Done. Here\'s what BRIEF found.';
-      document.getElementById('progress-pct').textContent = '100%';
-      document.querySelectorAll('.step-cell').forEach(c => { c.classList.remove('active'); c.classList.add('done'); });
-
       if (msg.status !== 'done') {
+        document.getElementById('progress-status').textContent = msg.status === 'cancelled' ? 'Analysis cancelled.' : 'Analysis could not be completed.';
+        document.querySelectorAll('.step-cell').forEach(c => c.classList.remove('active'));
         showError(msg.status === 'cancelled' ? 'Analysis cancelled.' : 'Analysis failed: ' + msg.message);
         document.getElementById('run-btn').disabled = false;
         document.getElementById('confirm-btn').disabled = false;
         return;
       }
+
+      document.getElementById('progress-fill').style.width = '100%';
+      document.getElementById('progress-status').textContent = 'Done. Here\'s what BRIEF found.';
+      document.getElementById('progress-pct').textContent = '100%';
+      document.querySelectorAll('.step-cell').forEach(c => { c.classList.remove('active'); c.classList.add('done'); });
 
       allData = msg.data;
       renderAll(allData);
@@ -1018,10 +1020,11 @@ function renderHealth(h) {
 
 function renderSummary(d) {
   const c = d.confidence || {};
-  const score = c.confidence_score != null ? c.confidence_score : 50;
-  const color = gaugeColor(score);
+  const hasScore = Number.isInteger(c.confidence_score);
+  const score = hasScore ? c.confidence_score : null;
+  const color = hasScore ? gaugeColor(score) : 'var(--muted)';
   const circumference = 2 * Math.PI * 56;
-  const offset = circumference * (1 - score / 100);
+  const offset = hasScore ? circumference * (1 - score / 100) : circumference;
 
   const risks = (c.top_three_risks || []).map((r, i) => `
     <div class="risk-item">
@@ -1066,12 +1069,12 @@ function renderSummary(d) {
             id="gauge-fill-circle"></circle>
         </svg>
         <div class="gauge-center">
-          <div class="gauge-num" style="color:${color}">${score}</div>
-          <div class="gauge-unit">/ 100</div>
+          <div class="gauge-num" style="color:${color}">${hasScore ? score : 'n/a'}</div>
+          <div class="gauge-unit">${hasScore ? '/ 100' : 'not scored'}</div>
         </div>
       </div>
       <div class="confidence-detail">
-        <span class="confidence-label-tag" style="${confTagStyle(c.confidence_label)}">${esc(c.confidence_label || 'Adequate')}</span>
+        <span class="confidence-label-tag" style="${confTagStyle(c.confidence_label)}">${esc(c.confidence_label || 'Insufficient data')}</span>
         <div class="confidence-headline">${esc(c.headline || '')}</div>
         <div class="confidence-rationale">${esc(c.score_rationale || '')}</div>
       </div>
@@ -1101,7 +1104,7 @@ function renderSummary(d) {
   // Animate the gauge after a tick
   setTimeout(() => {
     const circle = document.getElementById('gauge-fill-circle');
-    if (circle) circle.style.strokeDashoffset = offset;
+    if (circle && hasScore) circle.style.strokeDashoffset = offset;
   }, 200);
 }
 

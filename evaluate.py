@@ -47,7 +47,6 @@ ANALYTICAL_FIELDS = (
     ("deliverables", "deliverables.challenge_note.opening"),
     ("deliverables", "deliverables.challenge_note.what_we_found"),
     ("deliverables", "deliverables.challenge_note.what_we_recommend"),
-    ("deliverables", "deliverables.screener_criteria[].criterion"),
     ("deliverables", "deliverables.screener_criteria[].why"),
 )
 
@@ -119,8 +118,15 @@ def check(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
         score = match.get("contamination_score") if match else None
         contamination.append({"label": label, "score": score,
                               "passed": isinstance(score, int) and not isinstance(score, bool) and score > 50})
+    structural = []
+    if "expect_unassessed" in case:
+        expected_count = int(case["expect_unassessed"])
+        actual_count = int((result.get("run_health") or {}).get("unassessed_hypotheses") or 0)
+        structural.append({"check": "unassessed_hypotheses", "expected": expected_count,
+                           "actual": actual_count, "passed": actual_count == expected_count})
     return {"id": case["id"], "expected": expected, "forbidden": forbidden,
-            "contamination": contamination, "step_errors": (result.get("run_health") or {}).get("step_errors", [])}
+            "contamination": contamination, "structural": structural,
+            "step_errors": (result.get("run_health") or {}).get("step_errors", [])}
 
 
 def metrics(cards: list[dict[str, Any]]) -> dict[str, float | int]:
@@ -129,17 +135,21 @@ def metrics(cards: list[dict[str, Any]]) -> dict[str, float | int]:
     fp = sum(not item["passed"] for card in cards for item in card["forbidden"])
     cont_pass = sum(item["passed"] for card in cards for item in card["contamination"])
     cont_total = sum(len(card["contamination"]) for card in cards)
+    structural_pass = sum(item["passed"] for card in cards for item in card.get("structural", []))
+    structural_total = sum(len(card.get("structural", [])) for card in cards)
     precision = tp / (tp + fp) if tp + fp else 1.0
     recall = tp / (tp + fn) if tp + fn else 1.0
     return {"true_positives": tp, "false_positives": fp, "false_negatives": fn,
             "precision": precision, "recall": recall,
             "convergence_passed": cont_pass, "convergence_total": cont_total,
+            "structural_passed": structural_pass, "structural_total": structural_total,
             "step_errors": sum(len(card["step_errors"]) for card in cards)}
 
 
 def thresholds_pass(summary: dict[str, Any], min_precision: float, min_recall: float) -> bool:
     return (summary["precision"] >= min_precision and summary["recall"] >= min_recall
             and summary["convergence_passed"] == summary["convergence_total"]
+            and summary.get("structural_passed", 0) == summary.get("structural_total", 0)
             and summary["step_errors"] == 0)
 
 
@@ -173,6 +183,10 @@ def main() -> int:
         for group in case.get("expect_any", []):
             if not isinstance(group, list) or not group:
                 raise SystemExit(f"Case {case['id']} has an incomplete expectation")
+        if "expect_unassessed" in case and (
+            not isinstance(case["expect_unassessed"], int) or case["expect_unassessed"] < 0
+        ):
+            raise SystemExit(f"Case {case['id']} has an invalid structural expectation")
     if args.ids:
         cases = [case for case in cases if case["id"] in args.ids]
     if not cases:

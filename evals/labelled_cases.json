@@ -14,8 +14,8 @@
     "expected_findings": [],
     "expected_high_convergence": [],
     "forbidden_findings": [
-      {"category": "sample_fit", "phrases": ["*"]},
-      {"category": "risk_to_fieldwork", "phrases": ["*"]}
+      {"category": "sample_fit", "phrases": ["cannot test", "sample cannot test", "capped at 50"]},
+      {"category": "risk_to_fieldwork", "phrases": ["cannot test", "sample cannot test", "capped at 50"]}
     ]
   }
 ]

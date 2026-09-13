@@ -369,7 +369,7 @@ def step_query(prompts, parsed, probe_models=None):
             else:
                 persona_responses.append(rec)
 
-    expected_per_model = {model: len(prompts) + len(personas) for model in models}
+    expected_per_model = {model: config.PROBE_PROMPT_COUNT + len(personas) for model in models}
     collected_per_model = {
         model: sum(1 for item in responses + persona_responses if item.get("model") == model)
         for model in models
@@ -378,7 +378,7 @@ def step_query(prompts, parsed, probe_models=None):
         "base_responses": responses,
         "persona_responses": persona_responses,
         "models": models,
-        "expected_answers": len(jobs),
+        "expected_answers": sum(expected_per_model.values()),
         "expected_per_model": expected_per_model,
         "collected_per_model": collected_per_model,
     }
@@ -1297,6 +1297,61 @@ def _safe_step(fn: Callable[..., Any], fallback: Any, *args: Any, **kwargs: Any)
         return fb
 
 
+def _contamination_fallback(convergence: dict[str, Any]) -> dict[str, Any]:
+    """Preserve measured hypotheses if only the explanation stage fails."""
+    assessed = []
+    valid_scores = []
+    for item in convergence.get("hypotheses", []) or []:
+        status = item.get("classification_status") or "insufficient_data"
+        score = item.get("measured_score") if status == "valid" else None
+        if isinstance(score, int) and not isinstance(score, bool):
+            valid_scores.append(score)
+            label = "Low" if score <= 25 else "Medium" if score <= 50 else "High" if score <= 75 else "Critical"
+            responses = (
+                f"{item.get('main', 0)}/{item.get('n_answers', 0)} responses presented this as the main cause; "
+                f"{item.get('mentions', 0)}/{item.get('n_answers', 0)} mentioned it as one factor."
+            )
+        elif status == "unassessed":
+            label = "Unassessed"
+            responses = "Unassessed: outside the five-hypothesis measurement limit."
+        else:
+            label = "Insufficient data"
+            responses = "Insufficient data: the convergence measurement could not be completed."
+        assessed.append({
+            "hypothesis_id": item.get("hypothesis_id"),
+            "hypothesis": item.get("hypothesis"),
+            "classification_status": status,
+            "contamination_score": score,
+            "score_label": label,
+            "explanation": "The measured result is shown, but the explanatory analysis failed and requires human review.",
+            "evidence_quotes": [
+                str(quote.get("quote") or "") if isinstance(quote, dict) else str(quote)
+                for quote in item.get("quotes") or []
+            ],
+            "responses_matching": responses,
+            "measured": status == "valid",
+            "per_model": item.get("per_model") or {},
+            "presence_pct": item.get("presence_pct"),
+            "recommendation": "Review the underlying probe answers before using this result.",
+        })
+    highest = max(valid_scores) if valid_scores else None
+    overall = (
+        "Low" if highest is not None and highest <= 25
+        else "Medium" if highest is not None and highest <= 50
+        else "High" if highest is not None and highest <= 75
+        else "Critical" if highest is not None
+        else "Insufficient data"
+    )
+    return {
+        "hypotheses_assessed": assessed,
+        "overall_contamination_level": overall,
+        "overall_explanation": "Measured convergence is preserved, but the explanation stage failed. Human review is required.",
+        "genuinely_original_hypotheses": [],
+        "most_dangerous_assumption": "",
+        "explanation_contract_errors": ["The contamination explanation stage failed."],
+    }
+
+
 def parse_brief(brief: str, mode: str = "market") -> Parsed:
     """Step 1 on its own, so the UI can show the extracted hypotheses for review."""
     start_run_log()
@@ -1386,10 +1441,20 @@ def run_brief(
     parsed = _attach_hypothesis_ids(parsed)
 
     progress("Working out how people actually ask about this", 2)
-    prompts = _safe_step(step_generate, [], parsed)
+    generated = _safe_step(step_generate, {"prompts": []}, parsed)
+    prompt_generation_error = ""
+    if isinstance(generated, dict):
+        prompts = generated.get("prompts", [])
+        prompt_generation_error = str(generated.get("_error") or "")
+    else:
+        prompts = generated
     if not isinstance(prompts, list):
         prompts = []
     prompts = [str(p).strip() for p in prompts if str(p).strip()][:6]
+    if len(prompts) < config.PROBE_PROMPT_COUNT and not prompt_generation_error:
+        prompt_generation_error = (
+            f"Expected {config.PROBE_PROMPT_COUNT} probe prompts but generated {len(prompts)}."
+        )
     if not prompts:
         prompts = [parsed.get("core_question", "Tell me about this topic")]
 
@@ -1419,11 +1484,11 @@ def run_brief(
     }, parsed, clusters)
 
     progress("Scoring the client's assumptions against AI consensus", 6)
-    contamination = _safe_step(step_hypothesis_contamination, {
-        "hypotheses_assessed": [], "overall_contamination_level": "Unknown",
-        "overall_explanation": "Analysis unavailable",
-        "genuinely_original_hypotheses": [], "most_dangerous_assumption": ""
-    }, parsed, clusters, query_data, convergence)
+    contamination = _safe_step(
+        step_hypothesis_contamination,
+        _contamination_fallback(convergence),
+        parsed, clusters, query_data, convergence,
+    )
 
     progress("Tracing where AI's assumptions come from", 7)
     archaeology = _safe_step(step_assumption_archaeology, {
@@ -1455,8 +1520,8 @@ def run_brief(
 
     progress("Scoring overall research design confidence", 11)
     confidence = _safe_step(step_confidence, {
-        "confidence_score": 50, "confidence_label": "Adequate",
-        "headline": "Analysis complete.", "score_rationale": "",
+        "confidence_score": None, "confidence_label": "Insufficient data",
+        "headline": "The research-design review could not be produced.", "score_rationale": "",
         "top_three_risks": [], "what_would_raise_it": ""
     }, parsed, clusters, gaps, temporal_drift, contamination, methodology, archaeology)
 
@@ -1466,6 +1531,8 @@ def run_brief(
     }, parsed, confidence, contamination, gaps, archaeology, methodology)
 
     step_errors = []
+    if prompt_generation_error:
+        step_errors.append({"step": "generate", "error": prompt_generation_error[:300]})
     for name, obj in [("parse", parsed), ("query", query_data), ("convergence", convergence), ("clusters", clusters),
                       ("gaps", gaps), ("drift", temporal_drift), ("contamination", contamination),
                       ("competitors", competitor_intel), ("archaeology", archaeology), ("methodology", methodology),
